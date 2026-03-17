@@ -20,8 +20,13 @@
  *     MISTRAL_API_KEY — required. Get one free at https://console.mistral.ai
  *
  * Output:
- *     Creates output-dir/ with:
- *         best.lean              — best completion (fewest sorry markers)
+ *     Creates output-dir/ as a complete Lean 4 project with:
+ *         Best.lean              — best proof (fewest sorry markers)
+ *         lakefile.lean          — Lean build configuration
+ *         lean-toolchain         — Lean version specifier
+ *         Main.lean              — entry point that imports Best
+ *         README.md              — verification instructions
+ *         .gitignore             — ignores build artifacts
  *         metadata.json          — timing, token usage, model info per completion
  *         prompt.txt             — the input prompt
  *         attempts/              — all completion attempts
@@ -30,11 +35,17 @@
  *             completion_1.lean      — second completion
  *             completion_1_raw.txt   — raw response with explanations
  *             ...
+ *
+ *     To verify: cd output-dir && lake update && lake build
  */
 
 import { parseArgs } from "util";
-import { mkdir, writeFile, readFile } from "fs/promises";
-import { join } from "path";
+import { mkdir, writeFile, readFile, copyFile } from "fs/promises";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const API_URL = "https://api.mistral.ai/v1/chat/completions";
 const MODEL = "labs-leanstral-2603";
@@ -191,6 +202,32 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+async function setupLeanProject(outputDir: string): Promise<void> {
+  const templatesDir = join(__dirname, "templates");
+
+  // Copy Lean project files
+  await copyFile(
+    join(templatesDir, "lakefile.lean"),
+    join(outputDir, "lakefile.lean")
+  );
+  await copyFile(
+    join(templatesDir, "lean-toolchain"),
+    join(outputDir, "lean-toolchain")
+  );
+  await copyFile(
+    join(templatesDir, "Main.lean"),
+    join(outputDir, "Main.lean")
+  );
+  await copyFile(
+    join(templatesDir, ".gitignore"),
+    join(outputDir, ".gitignore")
+  );
+  await copyFile(
+    join(templatesDir, "README.lean.md"),
+    join(outputDir, "README.md")
+  );
+}
+
 async function main() {
   const { values } = parseArgs({
     args: process.argv.slice(2),
@@ -265,6 +302,9 @@ Environment:
   await mkdir(outputDir, { recursive: true });
   const attemptsDir = join(outputDir, "attempts");
   await mkdir(attemptsDir, { recursive: true });
+
+  // Set up Lean project files (lakefile, toolchain, etc.)
+  await setupLeanProject(outputDir);
 
   // Save the prompt for reference
   await writeFile(join(outputDir, "prompt.txt"), prompt, "utf-8");
@@ -343,17 +383,21 @@ Environment:
     "utf-8"
   );
 
-  // Copy best completion to a convenient location
+  // Copy best completion to a convenient location (Best.lean for Lean module naming)
   const bestLean = await readFile(
     join(attemptsDir, `completion_${bestIdx}.lean`),
     "utf-8"
   );
-  await writeFile(join(outputDir, "best.lean"), bestLean, "utf-8");
+  await writeFile(join(outputDir, "Best.lean"), bestLean, "utf-8");
 
   console.error(`\nResults saved to ${outputDir}/`);
   console.error(
-    `Best completion: attempts/completion_${bestIdx}.lean (${bestSorryCount} sorry)`
+    `Best completion: Best.lean (from attempts/completion_${bestIdx}.lean, ${bestSorryCount} sorry)`
   );
+  console.error(`\nTo verify the proof:`);
+  console.error(`  cd ${outputDir}`);
+  console.error(`  lake update  # Download dependencies`);
+  console.error(`  lake build   # Build and verify proofs`);
 
   // Print the best completion to stdout for easy piping
   console.log(bestLean);

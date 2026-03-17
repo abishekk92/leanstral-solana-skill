@@ -78,11 +78,16 @@ Convert this Solana program into a Lean 4 model and prove that all state transit
 
 ## Output Structure
 
-The script generates an organized output directory:
+The script generates a **complete Lean 4 project** ready for verification:
 
 ```
 output_dir/
-├── best.lean           # The best proof (fewest sorry markers)
+├── Best.lean           # The best proof (fewest sorry markers)
+├── lakefile.lean       # Lean build configuration
+├── lean-toolchain      # Lean version specifier
+├── Main.lean           # Entry point
+├── README.md           # Verification instructions
+├── .gitignore          # Ignores build artifacts
 ├── metadata.json       # Timing, token usage, and rankings
 ├── prompt.txt          # The original verification prompt
 └── attempts/           # All completion attempts
@@ -93,7 +98,14 @@ output_dir/
     └── ...
 ```
 
-Use `best.lean` as your starting point. The `attempts/` directory contains all completions for debugging or comparison.
+**To verify the proofs:**
+```bash
+cd output_dir
+lake update  # Download dependencies (Mathlib)
+lake build   # Build and verify - if this succeeds, the proof is valid!
+```
+
+No `sorry` markers = complete formal verification!
 
 ## What's Included
 

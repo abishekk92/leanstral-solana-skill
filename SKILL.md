@@ -81,10 +81,15 @@ bun /path/to/skill/scripts/call_leanstral.ts \
   --temperature 0.6
 ```
 
-**Output structure**:
+**Output structure** (complete Lean 4 project):
 ```
 output_dir/
-├── best.lean           # The best proof (fewest sorry markers)
+├── Best.lean           # The best proof (fewest sorry markers)
+├── lakefile.lean       # Lean build configuration
+├── lean-toolchain      # Lean version specifier
+├── Main.lean           # Entry point
+├── README.md           # Verification instructions
+├── .gitignore          # Ignores build artifacts
 ├── metadata.json       # Timing, token usage, and rankings
 ├── prompt.txt          # The original prompt
 └── attempts/           # All completion attempts
@@ -94,7 +99,14 @@ output_dir/
     └── ...
 ```
 
-Use `best.lean` for your work. The `attempts/` directory contains all completion attempts for debugging or comparison.
+**The output is a complete, buildable Lean 4 project.** Anyone can verify the proofs by running:
+```bash
+cd output_dir
+lake update  # Download Mathlib dependencies
+lake build   # Build and verify proofs
+```
+
+If `lake build` succeeds with no errors, the proof is formally verified!
 
 The script requires `MISTRAL_API_KEY` as an environment variable. If it's not set, tell the user to:
 1. Go to https://console.mistral.ai
