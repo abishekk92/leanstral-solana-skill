@@ -14,16 +14,19 @@
     "mistral"
   ],
   "main": "SKILL.md",
+  "bin": {
+    "leanstral": "./bin/leanstral"
+  },
   "files": [
     "SKILL.md",
-    "scripts/",
-    "tools/"
+    "scripts/templates/",
+    "lean_support/",
+    "bin/"
   ],
   "scripts": {
-    "test": "bun scripts/call_leanstral.ts --help",
-    "leanstral": "bun scripts/call_leanstral.ts",
-    "analyze-anchor": "cargo run --manifest-path tools/anchor-ir/Cargo.toml --",
-    "verify-solana": "bun scripts/verify_solana.ts"
+    "postinstall": "cargo build --release && mkdir -p bin && cp target/release/leanstral bin/ && chmod +x bin/leanstral",
+    "prepack": "cargo build --release && mkdir -p bin && cp target/release/leanstral bin/ && chmod +x bin/leanstral",
+    "test": "./bin/leanstral --help"
   },
   "repository": {
     "type": "git",
@@ -32,9 +35,6 @@
   "author": "abishekk92",
   "license": "MIT",
   "homepage": "https://github.com/abishekk92/leanstral-solana-skill#readme",
-  "engines": {
-    "bun": ">=1.0.0"
-  },
   "agentSkills": {
     "skills": [
       "SKILL.md"

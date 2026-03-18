@@ -31,9 +31,9 @@ npx skills add leanstral-solana-skill
 
 1. Clone or download this repository
 2. Install the entire skill directory, not just `SKILL.md`
-3. Ensure `scripts/`, `scripts/templates/`, and `tools/anchor-ir/` stay adjacent to `SKILL.md`
-4. Install Bun 1.0+ (required for the API script)
-5. Install a Rust toolchain as well if you want the analyzer-first Solana workflow
+3. Ensure `scripts/templates/`, `lean_support/`, and the compiled binary stay adjacent to `SKILL.md`
+4. Install a Rust toolchain (required to build the CLI binary)
+5. Run `npm install` or `cargo build --release` to build the binary
 
 ## Setup
 
@@ -52,17 +52,17 @@ When you ask your AI coding agent to verify code or generate proofs, the skill:
 1. **Analyzes the Solana program** - Extracts instructions, Anchor account constraints, PDA seeds, transfer patterns, and optional test signals
 2. **Ranks candidate properties** - Access control, conservation, state-machine safety, arithmetic bounds, and related invariants
 3. **Prepares one prompt per property** - Keeps each Lean task small and compilable
-4. **Calls the API** - Uses `scripts/call_leanstral.ts` to generate proofs (pass@N supported)
+4. **Calls the API** - Uses the `leanstral` CLI to generate proofs (pass@N supported)
 5. **Evaluates and validates results** - Prefers locally-checkable output when `--validate` is enabled
 
 ## Solana Analysis
 
-The repository now includes a Rust analyzer at `tools/anchor-ir/` that treats Anchor IDL as the first-class structural input and uses `anchor-syn` source analysis as an enrichment layer.
+The CLI includes an analyzer that treats Anchor IDL as the first-class structural input and uses `anchor-syn` source analysis as an enrichment layer.
 
 Example:
 
 ```bash
-npm run analyze-anchor -- \
+leanstral analyze \
   --idl path/to/target/idl/my_program.json \
   --input example/escrow/programs/escrow/src/lib.rs \
   --tests example/escrow/tests/escrow.ts \
@@ -76,7 +76,7 @@ This emits:
 To run the full analyzer-to-Leanstral flow in one command:
 
 ```bash
-npm run verify-solana -- \
+leanstral verify \
   --idl path/to/target/idl/my_program.json \
   --input path/to/programs/my_program/src/lib.rs \
   --tests path/to/tests/my_program.ts \
@@ -168,13 +168,15 @@ export LEANSTRAL_VALIDATION_WORKSPACE=/path/to/leanstral-validation-workspace
 ## What's Included
 
 - **SKILL.md** - Complete instructions for AI agents
-- **tools/anchor-ir/** - Rust analyzer that parses Anchor programs into a reusable IR using `anchor-syn`
-- **scripts/call_leanstral.ts** - TypeScript/Bun script for calling the Leanstral API
-  - Supports pass@N (multiple completions for higher success rates)
+- **leanstral binary** - Single compiled binary that does everything end-to-end
+  - Built-in Anchor program analyzer using `anchor-syn`
+  - Leanstral API client with pass@N support
   - Automatic retry with exponential backoff
-  - Extracts and ranks proofs by completeness
-  - Optional `--validate` mode that runs `lake build Best` and prefers a passing completion
+  - Proof validation using Lake builds
+  - Compiler-guided repair with bounded retry loops
   - Clean output organization with best proof highlighted
+- **scripts/templates/** - Lean project templates and prompt templates
+- **lean_support/** - Support library modules for Solana semantics
 - **example/escrow/** - Solana escrow program plus generated Lean proof artifacts
   - Full Anchor 0.32.1 implementation with passing tests
   - Example verification prompt and proof workflow
@@ -199,7 +201,7 @@ This skill works with any agent that implements the [Agent Skills spec](https://
 
 ## Requirements
 
-- Bun 1.0 or higher (for the API script)
+- Rust toolchain (to build the CLI binary)
 - `MISTRAL_API_KEY` environment variable
 - Internet connection for API calls
 - Lean 4 + Lake if you want to validate generated proofs locally

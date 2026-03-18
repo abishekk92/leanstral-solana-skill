@@ -37,7 +37,7 @@ yarn-error.log*
 .anchor/
 target/
 test-ledger/
-Cargo.lock
+# Cargo.lock is tracked for binaries but not for libraries
 package-lock.json
 yarn.lock
 

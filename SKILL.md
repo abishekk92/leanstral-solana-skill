@@ -24,12 +24,11 @@ The API endpoint is currently free during Mistral's feedback period.
 
 Before calling Leanstral, inspect the Solana project and infer what is worth proving. Leanstral is a proof engine, not a project analyzer. The skill should derive candidate properties from the program and tests before it asks for Lean code.
 
-Use the Rust analyzer at `tools/anchor-ir/` when working with Anchor programs.
-
-For Anchor projects, treat the IDL as the first-class structural source of truth and use Rust source as an enrichment layer for semantics that the IDL does not preserve.
+Use the `leanstral` CLI tool for all operations. For Anchor projects, treat the IDL as the first-class structural source of truth and use Rust source as an enrichment layer for semantics that the IDL does not preserve.
 
 ```bash
-npm run analyze-anchor -- \
+# Analyze only (no proof generation)
+leanstral analyze \
   --idl path/to/target/idl/my_program.json \
   --input path/to/programs/my_program/src/lib.rs \
   --tests path/to/tests/my_program.ts \
@@ -40,10 +39,10 @@ This emits:
 - `analysis.json` with instructions, account constraints, PDA seeds, transfer patterns, and test-derived hints
 - one prompt template per candidate property
 
-When you want the full pipeline, run:
+When you want the full pipeline (recommended), run:
 
 ```bash
-npm run verify-solana -- \
+leanstral verify \
   --idl path/to/target/idl/my_program.json \
   --input path/to/programs/my_program/src/lib.rs \
   --tests path/to/tests/my_program.ts \
@@ -124,14 +123,14 @@ Prefer prompts generated from the analyzer output over ad hoc prose. The analyze
 
 ### Step 3: Call the Leanstral API
 
-Run the script at `scripts/call_leanstral.ts`. It handles:
+Use the `leanstral generate` command. It handles:
 
 - Sending the prompt to `labs-leanstral-2603` via the Mistral chat completions API
 - Running **pass@4** by default (4 independent completions) for higher proof success rates
 - Returning all completions so you can pick the best one
 
 ```bash
-bun /path/to/skill/scripts/call_leanstral.ts \
+leanstral generate \
   --prompt-file /tmp/leanstral_prompt.txt \
   --output-dir /tmp/leanstral_output \
   --passes 4 \
@@ -164,10 +163,10 @@ lake build   # Build and verify proofs
 
 If `lake build` succeeds with no errors, the proof is formally verified.
 
-If you want the script itself to prefer locally-checkable output, run it with `--validate`. In that mode it tries candidate completions with `lake build Best` and prefers the first successful build over a lower `sorry` count.
+If you want to prefer locally-checkable output, run it with `--validate`. In that mode it tries candidate completions with `lake build Best` and prefers the first successful build over a lower `sorry` count.
 The validator uses Lake's own cache mechanisms rather than copying dependency trees around: it runs `lake --try-cache build Best`, enables the shared local artifact cache with `LAKE_ARTIFACT_CACHE=true`, and reuses a persistent validation workspace so dependencies are not recloned for every attempt. You can override that workspace with `LEANSTRAL_VALIDATION_WORKSPACE`.
 
-The script requires `MISTRAL_API_KEY` as an environment variable. If it's not set, tell the user to:
+The CLI tool requires `MISTRAL_API_KEY` as an environment variable. If it's not set, tell the user to:
 1. Go to https://console.mistral.ai
 2. Create an API key (Leanstral is free/near-free during the labs period)
 3. Run: `export MISTRAL_API_KEY=your_key_here`
