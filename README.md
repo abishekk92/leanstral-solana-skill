@@ -201,7 +201,9 @@ This skill works with any agent that implements the [Agent Skills spec](https://
 
 ## Requirements
 
-- Rust toolchain (to build the CLI binary)
+- Rust toolchain (recommended - most Solana developers already have this)
+  - Install from https://rustup.rs/ if needed
+  - If Rust is not available, the pre-built binary may work on macOS ARM64
 - `MISTRAL_API_KEY` environment variable
 - Internet connection for API calls
 - Lean 4 + Lake if you want to validate generated proofs locally

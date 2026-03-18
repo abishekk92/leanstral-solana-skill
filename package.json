@@ -20,13 +20,14 @@
   "files": [
     "SKILL.md",
     "bin/",
+    "install.sh",
     "Cargo.toml",
     "Cargo.lock",
     "crates/",
     "tools/"
   ],
   "scripts": {
-    "postinstall": "cargo build --release && mkdir -p bin && cp target/release/leanstral bin/ && chmod +x bin/leanstral",
+    "postinstall": "bash install.sh",
     "prepack": "cargo build --release && mkdir -p bin && cp target/release/leanstral bin/ && chmod +x bin/leanstral",
     "test": "./bin/leanstral --help"
   },
