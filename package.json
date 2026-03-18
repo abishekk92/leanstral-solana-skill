@@ -19,9 +19,11 @@
   },
   "files": [
     "SKILL.md",
-    "scripts/templates/",
-    "lean_support/",
-    "bin/"
+    "bin/",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/",
+    "tools/"
   ],
   "scripts": {
     "postinstall": "cargo build --release && mkdir -p bin && cp target/release/leanstral bin/ && chmod +x bin/leanstral",

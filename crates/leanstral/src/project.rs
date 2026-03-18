@@ -1,61 +1,44 @@
 use anyhow::Result;
 use std::path::Path;
 
+// Embed template files
+const LAKEFILE: &str = include_str!("../templates/lakefile.lean");
+const LEAN_TOOLCHAIN: &str = include_str!("../templates/lean-toolchain");
+const MAIN_LEAN: &str = include_str!("../templates/Main.lean");
+const GITIGNORE: &str = include_str!("../templates/.gitignore");
+const README: &str = include_str!("../templates/README.lean.md");
+
+// Embed lean_support files
+const SUPPORT_LAKEFILE: &str = include_str!("../lean_support/lakefile.lean");
+const SUPPORT_TOOLCHAIN: &str = include_str!("../lean_support/lean-toolchain");
+const SUPPORT_ROOT: &str = include_str!("../lean_support/Leanstral.lean");
+const SUPPORT_ACCOUNT: &str = include_str!("../lean_support/Leanstral/Solana/Account.lean");
+const SUPPORT_AUTHORITY: &str = include_str!("../lean_support/Leanstral/Solana/Authority.lean");
+const SUPPORT_STATE: &str = include_str!("../lean_support/Leanstral/Solana/State.lean");
+const SUPPORT_TOKEN: &str = include_str!("../lean_support/Leanstral/Solana/Token.lean");
+
 pub fn setup_lean_project(output_dir: &Path) -> Result<()> {
-    // Copy template files from the repository
-    let repo_root = std::env::current_dir()?;
-    let templates_dir = repo_root.join("scripts/templates");
-    let support_dir = repo_root.join("lean_support");
+    // Write template files
+    std::fs::write(output_dir.join("lakefile.lean"), LAKEFILE)?;
+    std::fs::write(output_dir.join("lean-toolchain"), LEAN_TOOLCHAIN)?;
+    std::fs::write(output_dir.join("Main.lean"), MAIN_LEAN)?;
+    std::fs::write(output_dir.join(".gitignore"), GITIGNORE)?;
+    std::fs::write(output_dir.join("README.md"), README)?;
 
-    // Copy lakefile.lean
-    std::fs::copy(
-        templates_dir.join("lakefile.lean"),
-        output_dir.join("lakefile.lean"),
-    )?;
+    // Write lean_support directory
+    let support_dir = output_dir.join("lean_support");
+    std::fs::create_dir_all(&support_dir)?;
+    std::fs::write(support_dir.join("lakefile.lean"), SUPPORT_LAKEFILE)?;
+    std::fs::write(support_dir.join("lean-toolchain"), SUPPORT_TOOLCHAIN)?;
+    std::fs::write(support_dir.join("Leanstral.lean"), SUPPORT_ROOT)?;
 
-    // Copy lean-toolchain
-    std::fs::copy(
-        templates_dir.join("lean-toolchain"),
-        output_dir.join("lean-toolchain"),
-    )?;
+    // Write Leanstral/Solana modules
+    let solana_dir = support_dir.join("Leanstral/Solana");
+    std::fs::create_dir_all(&solana_dir)?;
+    std::fs::write(solana_dir.join("Account.lean"), SUPPORT_ACCOUNT)?;
+    std::fs::write(solana_dir.join("Authority.lean"), SUPPORT_AUTHORITY)?;
+    std::fs::write(solana_dir.join("State.lean"), SUPPORT_STATE)?;
+    std::fs::write(solana_dir.join("Token.lean"), SUPPORT_TOKEN)?;
 
-    // Copy Main.lean
-    std::fs::copy(
-        templates_dir.join("Main.lean"),
-        output_dir.join("Main.lean"),
-    )?;
-
-    // Copy .gitignore
-    std::fs::copy(
-        templates_dir.join(".gitignore"),
-        output_dir.join(".gitignore"),
-    )?;
-
-    // Copy README
-    std::fs::copy(
-        templates_dir.join("README.lean.md"),
-        output_dir.join("README.md"),
-    )?;
-
-    // Copy lean_support directory
-    copy_dir_recursive(&support_dir, &output_dir.join("lean_support"))?;
-
-    Ok(())
-}
-
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-
-        if ty.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
     Ok(())
 }
