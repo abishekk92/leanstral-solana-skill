@@ -50,6 +50,12 @@ bin/leanstral
 **/lean_proofs/prompt.txt
 **/.leanstral/
 
+# Lean build artifacts
+.lake/
+*.olean
+*.olean.trace
+*.old
+
 # Local agent/editor state
 .agents/
 .claude/
