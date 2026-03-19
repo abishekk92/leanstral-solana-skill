@@ -1,0 +1,28 @@
+import Leanstral.Solana.Account
+import Leanstral.Solana.Authority
+
+open Leanstral.Solana
+
+-- Define the minimal state needed for the escrow
+structure EscrowState where
+  initializer : Pubkey
+  initializer_token_account : Pubkey
+  initializer_amount : U64
+  taker_amount : U64
+  escrow_token_account : Pubkey
+  bump : U8
+
+-- Define the transition function for the exchange operation
+def exchangeTransition (p_preState : EscrowState) (p_signer : Pubkey) : Option Unit :=
+  if p_signer = p_preState.initializer then
+    some ()
+  else
+    none
+
+theorem exchange_access_control (p_preState : EscrowState) (p_signer : Pubkey)
+    (h : exchangeTransition p_preState p_signer ≠ none) :
+    p_signer = p_preState.initializer := by
+  unfold exchangeTransition at h
+  split_ifs at h with h_eq
+  · exact h_eq
+  · contradiction

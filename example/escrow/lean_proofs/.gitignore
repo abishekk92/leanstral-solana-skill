@@ -1,5 +1,0 @@
-# Lean build artifacts
-/.lake/
-/lake-manifest.json
-/build/
-/Main

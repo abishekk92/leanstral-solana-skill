@@ -1,0 +1,23 @@
+```lean4
+import Leanstral.Solana.Account
+import Leanstral.Solana.Token
+
+open Leanstral.Solana
+
+def cancelTransition (p_accounts : List Account) : Option (List Account) :=
+  match p_accounts with
+  | [] => none
+  | acc :: rest =>
+    if acc.authority = p_initializer_authority then
+      some ({ acc with balance := acc.balance + p_amount } :: rest)
+    else
+      some (acc :: cancelTransition rest)
+
+theorem cancel_conservation (p_accounts p_accounts' : List Account)
+    (h : cancelTransition p_accounts = some p_accounts') :
+    trackedTotal p_accounts = trackedTotal p_accounts' := by
+  simp [cancelTransition] at h
+  rcases h with ⟨h_eq⟩
+  rw [h_eq]
+  exact trackedTotal_map_id p_accounts
+```
