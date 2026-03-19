@@ -117,6 +117,7 @@ fn build_proof_plan(
             relevant_instructions: candidate.relevant_instructions.clone(),
             lean_support_modules: support_modules_for_category(&candidate.category),
             theorem_shape: theorem_shape_for_category(&candidate.category).into(),
+            theorem_skeleton: generate_theorem_skeleton(candidate, instructions),
             status: "planned".into(),
             notes: candidate.evidence.clone(),
         })
@@ -178,6 +179,85 @@ fn theorem_shape_for_category(category: &str) -> &'static str {
         "state_machine" => "cancel_transition_sets_lifecycle_closed",
         "arithmetic_safety" => "transition_preserves_numeric_bounds",
         _ => "custom",
+    }
+}
+
+fn generate_theorem_skeleton(
+    candidate: &PropertyCandidateIr,
+    instructions: &[InstructionIr],
+) -> String {
+    let default_name = String::from("transition");
+    let instruction_name = candidate
+        .relevant_instructions
+        .first()
+        .unwrap_or(&default_name);
+
+    match candidate.category.as_str() {
+        "access_control" => {
+            format!(
+                r#"theorem {}_access_control (p_preState : EscrowState) (p_signer : Pubkey)
+    (h : {}Transition p_preState p_signer ≠ none) :
+    p_signer = p_preState.initializer := by
+  sorry"#,
+                instruction_name, instruction_name
+            )
+        }
+        "conservation" => {
+            format!(
+                r#"theorem {}_conservation (p_accounts p_accounts' : List Account)
+    (h : {}PreservesBalances p_accounts = some p_accounts') :
+    trackedTotal p_accounts = trackedTotal p_accounts' := by
+  sorry"#,
+                instruction_name, instruction_name
+            )
+        }
+        "state_machine" => {
+            format!(
+                r#"theorem {}_closes_escrow (p_preState p_postState : EscrowState)
+    (h : {}Transition p_preState = some p_postState) :
+    p_postState.lifecycle = Lifecycle.closed := by
+  sorry"#,
+                instruction_name, instruction_name
+            )
+        }
+        "arithmetic_safety" => {
+            let args = instructions
+                .iter()
+                .find(|ix| ix.name == *instruction_name)
+                .map(|ix| {
+                    ix.args
+                        .iter()
+                        .filter(|arg| arg.contains("u64") || arg.contains("u8"))
+                        .map(|arg| {
+                            let parts: Vec<&str> = arg.split(':').collect();
+                            format!("p_{}", parts[0].trim())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+
+            format!(
+                r#"theorem {}_arithmetic_safety {} (p_preState p_postState : ProgramState)
+    (h : {}Transition p_preState {} = some p_postState) :
+    {} <= U64_MAX := by
+  sorry"#,
+                instruction_name,
+                args,
+                instruction_name,
+                args,
+                args.split_whitespace().next().unwrap_or("p_amount")
+            )
+        }
+        _ => {
+            format!(
+                r#"theorem {}_property (p_s p_s' : ProgramState)
+    (h : {}Transition p_s = some p_s') :
+    true := by
+  sorry"#,
+                instruction_name, instruction_name
+            )
+        }
     }
 }
 
@@ -553,12 +633,16 @@ fn build_prompt(
     let support_api = support_api_for_modules(&obligation.lean_support_modules);
     format!(
         "I need a single Lean 4 module that compiles under Lean 4.15 + Mathlib 4.15.\n\n\
-		Return Lean code only.\n\
-		Do not duplicate declarations.\n\
-	Do not leave theorem bodies empty after `:= by`.\n\
-	Do not redefine any APIs listed in the Support API section below. You may define NEW helpers not listed there.\n\
-	If a proof is incomplete, use `sorry` inside the proof body.\n\
-	Prefer a smaller explicit model that compiles over a larger broken one.\n\n\
+IMPORTANT: A theorem skeleton with correct parameter declarations is provided below.\n\
+Your task is to COMPLETE this theorem by:\n\
+1. Defining any required types and transition functions referenced in the theorem signature\n\
+2. Replacing the `sorry` placeholder with a complete proof\n\n\
+Return Lean code only.\n\
+Do not duplicate declarations.\n\
+Do not modify the provided theorem signature - all parameters are already correctly declared.\n\
+Do not redefine any APIs listed in the Support API section below. You may define NEW helpers not listed there.\n\
+If a proof is incomplete, use `sorry` inside the proof body.\n\
+Prefer a smaller explicit model that compiles over a larger broken one.\n\n\
 IMPORTANT: The Support API section below lists definitions that are ALREADY IMPORTED from the support modules.\n\
 You MUST use these existing definitions. DO NOT redefine any function, type, or lemma listed in the Support API.\n\
 If you need a definition not in the Support API, you may define it yourself.\n\n\
@@ -575,7 +659,9 @@ Evidence:\n{evidence}\n\n\
 The following definitions are available after 'open Leanstral.Solana':\n\n\
 ```lean\n{support_api}\n```\n\n\
 	## Context\n\n{hint}\n\n\
-		## Output Requirements\n\
+## Theorem Skeleton (DO NOT MODIFY - Complete this exact signature)\n\n\
+```lean\n{theorem_skeleton}\n```\n\n\
+## Output Requirements\n\
 			1. Define the model types and executable transition functions first\n\
 			2. Import the listed support modules and write `open Leanstral.Solana`; use that surface consistently\n\
 			3. State the theorem only after the semantics are defined\n\
@@ -609,6 +695,7 @@ The following definitions are available after 'open Leanstral.Solana':\n\n\
             .collect::<Vec<_>>()
             .join("\n"),
         support_api = support_api,
+        theorem_skeleton = obligation.theorem_skeleton,
         hint = match obligation.category.as_str() {
         "access_control" =>
 		                "Model only the authorization condition that matters for this instruction. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use one local program state structure, typically `EscrowState`, plus `Pubkey`; do not define extra local types like `AccountState`, `CancelPreState`, or helper state wrappers for this v1 access-control theorem. Define `cancelTransition : EscrowState -> Pubkey -> Option Unit` or an equally small transition. Define authorization as a direct `Prop` equality like `signer = preState.initializer`; do not define authorization as an existential over post-state reachability. In authorization predicates and theorem statements, use propositional equality `=` and never boolean equality `==`. Do not use `decide` for v1 access-control proofs. Do not mix propositional equality with boolean equality. In record updates, use Lean syntax `field := value`, never `field = value`. Prefer theorem statements of the exact form `cancelTransition preState signer ≠ none -> signer = preState.initializer` or an equivalent direct authorization predicate. When proving an `if`-based theorem, unfold the transition, split on the `if`, and use the equality hypothesis from the true branch directly with `exact` or `simpa`; do not use `rfl` unless both sides are definitionally equal. Avoid tactic combinators like `all_goals` and `try`.",

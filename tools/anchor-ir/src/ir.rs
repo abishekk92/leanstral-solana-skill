@@ -96,6 +96,7 @@ pub struct ProofObligationIr {
     pub relevant_instructions: Vec<String>,
     pub lean_support_modules: Vec<String>,
     pub theorem_shape: String,
+    pub theorem_skeleton: String,
     pub status: String,
     pub notes: Vec<String>,
 }
