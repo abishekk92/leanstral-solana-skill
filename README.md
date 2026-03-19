@@ -16,7 +16,6 @@ Leanstral is a 119B-parameter sparse model (6.5B active) specifically trained fo
 - **Formally verify** Solana programs, Rust code, and smart contracts
 - **Prove properties** like arithmetic safety, state machine correctness, and invariant preservation
 - **Generate Lean 4 code** that models and proves implementation correctness
-- **Convert** proof assistant code (Rocq/Coq) to Lean 4
 - **Debug** existing Lean 4 proofs or definitions
 
 ## Installation
