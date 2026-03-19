@@ -30,7 +30,7 @@ npx skills add abishekk92/leanstral-solana-skill
 
 1. Clone or download this repository
 2. Install the entire skill directory, not just `SKILL.md`
-3. Ensure `scripts/templates/`, `lean_support/`, and the compiled binary stay adjacent to `SKILL.md`
+3. Ensure `crates/leanstral/templates/`, `crates/leanstral/lean_support/`, and the compiled binary stay adjacent to `SKILL.md`
 4. Install a Rust toolchain (required to build the CLI binary)
 5. Run `npm install` or `cargo build --release` to build the binary
 
@@ -96,7 +96,7 @@ Recommended precedence:
 
 ## Prompting Guidance
 
-For best results, ask for one property at a time and constrain the model to return a single compilable Lean module. A reusable template is available at [scripts/templates/PROMPT_TEMPLATE.md](/Users/abishek/code/leanstral-solana-skill/scripts/templates/PROMPT_TEMPLATE.md).
+For best results, ask for one property at a time and constrain the model to return a single compilable Lean module. A reusable template is available at [crates/leanstral/templates/PROMPT_TEMPLATE.md](crates/leanstral/templates/PROMPT_TEMPLATE.md).
 
 ## Examples
 
@@ -174,8 +174,8 @@ export LEANSTRAL_VALIDATION_WORKSPACE=/path/to/leanstral-validation-workspace
   - Proof validation using Lake builds
   - Compiler-guided repair with bounded retry loops
   - Clean output organization with best proof highlighted
-- **scripts/templates/** - Lean project templates and prompt templates
-- **lean_support/** - Support library modules for Solana semantics
+- **crates/leanstral/templates/** - Lean project templates and prompt templates
+- **crates/leanstral/lean_support/** - Support library modules for Solana semantics
 - **example/escrow/** - Solana escrow program plus generated Lean proof artifacts
   - Full Anchor 0.32.1 implementation with passing tests
   - Example verification prompt and proof workflow
