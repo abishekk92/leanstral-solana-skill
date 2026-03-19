@@ -1,0 +1,22 @@
+{
+  "model": "labs-leanstral-2603",
+  "passes": 1,
+  "temperature": 0.3,
+  "max_tokens": 16384,
+  "validate": false,
+  "completions": [
+    {
+      "index": 0,
+      "sorry_count": 0,
+      "elapsed_seconds": 4.5880790000000005,
+      "prompt_tokens": 5658,
+      "completion_tokens": 323,
+      "total_tokens": 5981,
+      "finish_reason": "stop",
+      "build_status": "not_run"
+    }
+  ],
+  "best_completion_index": 0,
+  "best_sorry_count": 0,
+  "best_selection_reason": "fewest_sorry"
+}

@@ -1,0 +1,24 @@
+```lean4
+import Leanstral.Solana
+open Leanstral.Solana
+
+def U64_MAX : Nat := 2^64 - 1
+
+structure ProgramState where
+  trackedTotal : Nat
+
+def initializeTransition (p_preState : ProgramState) (p_amount p_taker_amount : Nat) : Option ProgramState :=
+  if p_amount <= U64_MAX ∧ p_taker_amount <= U64_MAX then
+    some { p_preState with trackedTotal := p_preState.trackedTotal + p_amount + p_taker_amount }
+  else
+    none
+
+theorem initialize_arithmetic_safety (p_amount p_taker_amount : Nat)
+    (p_preState p_postState : ProgramState)
+    (h : initializeTransition p_preState p_amount p_taker_amount = some p_postState) :
+    p_amount <= U64_MAX := by
+  simp [initializeTransition] at h
+  split_ifs at h with hcond
+  · exact hcond.1
+  · contradiction
+```
