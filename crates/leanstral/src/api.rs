@@ -16,28 +16,62 @@ const SYSTEM_PROMPT: &str = r#"You are Leanstral, an expert Lean 4 proof enginee
 Produce a single Lean 4 module that is as likely as possible to compile under Lean 4.15 + Mathlib 4.15.
 
 Hard requirements:
-1. Output exactly one Lean module.
-2. Do not emit duplicate declarations.
-3. Do not leave theorem bodies empty after `:= by`.
+1. Output exactly one Lean module in a SINGLE ```lean4 code block. Do NOT split the code into multiple code blocks.
+2. Do not emit duplicate declarations. Each theorem, function, or type should appear exactly once.
+3. Do not leave theorem bodies empty after `:= by`. Always provide a proof body (use `sorry` if needed).
 4. Do not invent identifiers, namespaces, or APIs that are not defined in the file or imported from Lean/Mathlib.
-5. Use only Lean 4 / Mathlib identifiers you are confident exist in this toolchain version.
-6. If a proof is incomplete, use `sorry` inside the proof body rather than leaving a stub.
-7. Prefer a smaller, explicit semantic model over an ambitious but broken one.
-8. Define the state transition functions before proving theorems about them.
+5. Define ALL helper functions, namespaces, and types BEFORE using them. For example, if you reference `Instr.cancel`, you must first define the `Instr` namespace with a `cancel` function.
+6. Use only Lean 4 / Mathlib identifiers you are confident exist in this toolchain version (Lean 4.15 + Mathlib 4.15).
+7. If a proof is incomplete, use `sorry` inside the proof body rather than leaving a stub.
+8. Prefer a smaller, explicit semantic model over an ambitious but broken one.
 9. If several properties are requested, it is acceptable to prove a smaller subset well rather than all of them badly.
 
 Recommended structure:
 - imports
-- model types
-- instruction/state transition functions
+- model types (structures, inductives)
+- helper functions and state transition functions
 - helper lemmas
-- theorems
+- theorems with proofs
 
-Output policy:
-- Prefer plain Lean code only.
-- Do not include prose before or after the code unless explicitly requested.
+Output format requirements:
+- Output plain Lean code only in a single ```lean4 code block.
+- Do NOT include explanatory prose, markdown headers, or multiple code blocks.
+- Do NOT show theorem stubs first and then implementations later. Show each theorem exactly once with its complete proof.
 - Use `import Mathlib` only if needed.
 - Prefer self-contained proofs and simple executable definitions.
+
+Example of GOOD output:
+```lean4
+import Mathlib
+
+structure State where
+  value : Nat
+
+def increment (s : State) : State :=
+  { value := s.value + 1 }
+
+theorem increment_increases (s : State) :
+    (increment s).value = s.value + 1 := by
+  simp [increment]
+```
+
+Example of BAD output (DO NOT DO THIS):
+First, here are the types:
+```lean4
+structure State where
+  value : Nat
+```
+
+Now the theorems:
+```lean4
+theorem foo : ... := by
+```
+
+And the proofs:
+```lean4
+theorem foo : ... := by
+  actual proof here
+```
 "#;
 
 #[derive(Debug, Serialize)]
@@ -225,9 +259,115 @@ fn extract_lean_code(content: &str) -> String {
     }
 
     if !extracted.is_empty() {
-        extracted.join("\n\n")
+        // If we have multiple blocks, try to deduplicate them
+        if extracted.len() > 1 {
+            deduplicate_lean_blocks(&extracted)
+        } else {
+            extracted[0].to_string()
+        }
     } else {
         content.to_string()
+    }
+}
+
+fn deduplicate_lean_blocks(blocks: &[&str]) -> String {
+    use std::collections::{HashMap, HashSet};
+
+    // Parse each block to find declarations (theorem, def, structure, inductive, etc.)
+    let decl_pattern = regex::Regex::new(
+        r"(?m)^(theorem|def|structure|inductive|class|instance|axiom|lemma)\s+([a-zA-Z_][a-zA-Z0-9_']*)"
+    ).unwrap();
+
+    // Map declaration names to their best implementation
+    let mut declarations: HashMap<String, (usize, &str, bool)> = HashMap::new();
+    let mut imports = Vec::new();
+    let mut seen_imports = HashSet::new();
+
+    for (block_idx, block) in blocks.iter().enumerate() {
+        // Collect imports from all blocks
+        for line in block.lines() {
+            if line.trim().starts_with("import ") {
+                let import_stmt = line.trim();
+                if !seen_imports.contains(import_stmt) {
+                    imports.push(import_stmt);
+                    seen_imports.insert(import_stmt);
+                }
+            }
+        }
+
+        // Find all declarations in this block
+        for cap in decl_pattern.captures_iter(block) {
+            if let (Some(_kind), Some(name_match)) = (cap.get(1), cap.get(2)) {
+                let name = name_match.as_str().to_string();
+                let decl_start = cap.get(0).unwrap().start();
+
+                // Find the end of this declaration (next declaration or end of block)
+                let next_decl = decl_pattern.find_at(block, decl_start + 1);
+                let decl_end = next_decl.map(|m| m.start()).unwrap_or(block.len());
+                let decl_text = &block[decl_start..decl_end];
+
+                // Determine if this has a real implementation
+                // A stub typically has `:= by` followed by nothing or just whitespace
+                let has_implementation = !is_stub(decl_text);
+
+                // Keep the declaration with implementation, or the latest one if both are stubs
+                if let Some((existing_idx, _existing_text, existing_has_impl)) = declarations.get(&name) {
+                    // Prefer the one with implementation
+                    if has_implementation && !existing_has_impl {
+                        declarations.insert(name, (block_idx, decl_text, has_implementation));
+                    } else if !has_implementation && *existing_has_impl {
+                        // Keep existing
+                    } else {
+                        // Both have impl or both are stubs, keep the later one
+                        if block_idx > *existing_idx {
+                            declarations.insert(name, (block_idx, decl_text, has_implementation));
+                        }
+                    }
+                } else {
+                    declarations.insert(name, (block_idx, decl_text, has_implementation));
+                }
+            }
+        }
+    }
+
+    // If deduplication didn't help much, just join blocks
+    if declarations.is_empty() {
+        return blocks.join("\n\n");
+    }
+
+    // Reconstruct the code with deduplicated declarations
+    let mut result = String::new();
+
+    // Add imports first
+    if !imports.is_empty() {
+        result.push_str(&imports.join("\n"));
+        result.push_str("\n\n");
+    }
+
+    // Add all declarations in a reasonable order (by block index, then position)
+    let mut sorted_decls: Vec<_> = declarations.values().collect();
+    sorted_decls.sort_by_key(|(block_idx, _, _)| *block_idx);
+
+    for (_, decl_text, _) in sorted_decls {
+        result.push_str(decl_text);
+        result.push_str("\n\n");
+    }
+
+    result.trim_end().to_string()
+}
+
+fn is_stub(decl_text: &str) -> bool {
+    // Check if this is a stub declaration (has := by but no proof body)
+    if let Some(by_pos) = decl_text.find(":= by") {
+        let after_by = &decl_text[by_pos + 5..].trim();
+        // If there's nothing after `:= by` or just whitespace/comments, it's a stub
+        let meaningful_content = after_by.lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with("--"))
+            .collect::<Vec<_>>();
+        meaningful_content.is_empty()
+    } else {
+        false
     }
 }
 
@@ -484,6 +624,54 @@ def bar := 2
         let result = extract_lean_code(input);
         assert!(result.contains("def foo := 1"));
         assert!(result.contains("def bar := 2"));
-        assert!(result.contains("\n\n")); // Blocks should be joined with double newline
+    }
+
+    #[test]
+    fn test_deduplicate_theorem_stubs() {
+        let input = r#"Here are the theorems:
+```lean4
+theorem add_comm (a b : Nat) : a + b = b + a := by
+```
+
+And here are the proofs:
+```lean4
+theorem add_comm (a b : Nat) : a + b = b + a := by
+  omega
+```"#;
+
+        let result = extract_lean_code(input);
+        // Should only contain one instance of add_comm
+        let count = result.matches("theorem add_comm").count();
+        assert_eq!(count, 1, "Should have exactly one add_comm theorem");
+        // Should have the version with the proof body
+        assert!(result.contains("omega"), "Should contain the proof body");
+    }
+
+    #[test]
+    fn test_deduplicate_multiple_stubs_and_impls() {
+        let input = r#"Types:
+```lean4
+structure Point where
+  x : Nat
+  y : Nat
+```
+
+Theorem stubs:
+```lean4
+theorem point_eq (p : Point) : p.x + p.y = p.y + p.x := by
+```
+
+Proofs:
+```lean4
+theorem point_eq (p : Point) : p.x + p.y = p.y + p.x := by
+  omega
+```"#;
+
+        let result = extract_lean_code(input);
+        let theorem_count = result.matches("theorem point_eq").count();
+        assert_eq!(theorem_count, 1, "Should have exactly one point_eq theorem");
+        let struct_count = result.matches("structure Point").count();
+        assert_eq!(struct_count, 1, "Should have exactly one Point structure");
+        assert!(result.contains("omega"));
     }
 }
