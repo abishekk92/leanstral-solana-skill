@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize)]
 pub struct AnalysisIr {
@@ -12,7 +12,7 @@ pub struct AnalysisIr {
     pub proof_plan: ProofPlanIr,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct InstructionIr {
     pub name: String,
     pub context_type: String,
@@ -24,7 +24,7 @@ pub struct InstructionIr {
     pub evidence_sources: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct TransferIr {
     pub from: Option<String>,
     pub to: Option<String>,
@@ -63,7 +63,7 @@ pub struct TestSignalIr {
     pub inferred_properties: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct PropertyCandidateIr {
     pub id: String,
     pub category: String,
@@ -106,4 +106,44 @@ pub struct CoverageSummaryIr {
     pub total_obligations: usize,
     pub supported_obligations: usize,
     pub unsupported_obligations: usize,
+}
+
+// LLM-assisted analysis protocol
+
+#[derive(Debug, Serialize)]
+pub struct LlmQuery {
+    pub id: String,
+    pub query_type: String,
+    pub instruction: String,
+    pub category: String,
+    pub transfers: Vec<TransferIr>,
+    pub rust_code_snippet: String,
+    pub question: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LlmQuerySet {
+    pub version: String,
+    pub queries: Vec<LlmQuery>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LlmResponse {
+    pub query_id: String,
+    pub parameters: Vec<LlmParameter>,
+    pub distinctness_constraints: Vec<String>,
+    pub theorem_signature: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct LlmParameter {
+    pub name: String,
+    pub param_type: String,
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LlmResponseSet {
+    pub version: String,
+    pub responses: Vec<LlmResponse>,
 }
