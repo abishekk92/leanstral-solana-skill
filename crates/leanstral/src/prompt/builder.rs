@@ -1,34 +1,5 @@
 use super::templates;
-use serde::{Deserialize, Serialize};
-
-/// Proof obligation from anchor-ir analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProofObligationIr {
-    pub id: String,
-    pub title: String,
-    pub category: String,
-    pub relevant_instructions: Vec<String>,
-    pub lean_support_modules: Vec<String>,
-    pub theorem_shape: String,
-    pub theorem_skeleton: String,
-    pub status: String,
-    pub notes: Vec<String>,
-}
-
-/// Supported surface from analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SupportedSurfaceIr {
-    pub lean_support_modules: Vec<String>,
-    pub supported_property_categories: Vec<String>,
-    pub unsupported_reasons: Vec<String>,
-}
-
-/// Proof plan from anchor-ir analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProofPlanIr {
-    pub supported_surface: SupportedSurfaceIr,
-    pub obligations: Vec<ProofObligationIr>,
-}
+use crate::ir::{ProofObligationIr, SupportedSurfaceIr};
 
 pub struct PromptBuilder;
 

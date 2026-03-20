@@ -1,27 +1,13 @@
 use crate::api::{generate_proofs, BuildStatus, LeanstralMetadata};
-use crate::prompt::{PromptBuilder, ProofPlanIr};
+use crate::ir::LlmQuerySet;
+use crate::proof_plan;
+use crate::prompt::PromptBuilder;
 use crate::validate::build_repair_prompt;
+use anchor_ir::{PropertyCandidateIr, AnalysisIr};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PropertyCandidate {
-    id: String,
-    category: String,
-    title: String,
-    confidence: String,
-    relevant_instructions: Vec<String>,
-    evidence: Vec<String>,
-    prompt_hint: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct AnalysisIr {
-    property_candidates: Vec<PropertyCandidate>,
-}
-
-fn candidate_priority(candidate: &PropertyCandidate) -> usize {
+fn candidate_priority(candidate: &PropertyCandidateIr) -> usize {
     let confidence_score = match candidate.confidence.as_str() {
         "high" => 0,
         "medium" => 1,
@@ -39,7 +25,7 @@ fn candidate_priority(candidate: &PropertyCandidate) -> usize {
     confidence_score * 10 + category_score
 }
 
-fn select_candidates(candidates: Vec<PropertyCandidate>, top_k: usize) -> Vec<PropertyCandidate> {
+fn select_candidates(candidates: Vec<PropertyCandidateIr>, top_k: usize) -> Vec<PropertyCandidateIr> {
     let mut ranked = candidates;
     ranked.sort_by_key(candidate_priority);
 
@@ -239,17 +225,66 @@ pub async fn run_full_pipeline(
         Some(&analysis_dir),
     ).map_err(|e| anyhow::anyhow!(e))?;
 
-    // Load analysis and proof plan
+    // Load analysis
     let analysis: AnalysisIr = serde_json::from_str(&std::fs::read_to_string(analysis_dir.join("analysis.json"))?)?;
-    let proof_plan: ProofPlanIr = serde_json::from_str(&std::fs::read_to_string(analysis_dir.join("proof_plan.json"))?)?;
-    let ranked = select_candidates(analysis.property_candidates, top_k);
 
-    // Read source code
+    // Read source code for LLM query generation
     let source = if let Some(ref input_path) = input {
         std::fs::read_to_string(input_path)?
     } else {
         String::new()
     };
+
+    // Generate LLM queries for complex properties
+    let queries = proof_plan::generate_llm_queries(
+        &analysis.property_candidates,
+        &analysis.instructions,
+        &source
+    );
+
+    // Check for LLM responses
+    let llm_responses = if !queries.is_empty() {
+        let response_path = analysis_dir.join("llm_responses.json");
+        if response_path.exists() {
+            Some(proof_plan::parse_llm_responses(&response_path)?)
+        } else {
+            // Save queries and exit
+            let query_set = LlmQuerySet {
+                version: "1.0".into(),
+                queries,
+            };
+            let queries_json = serde_json::to_string_pretty(&query_set)?;
+            std::fs::write(analysis_dir.join("llm_queries.json"), queries_json)?;
+
+            eprintln!("🤖 LLM assistance needed. Please analyze llm_queries.json and provide llm_responses.json");
+            eprintln!("Query file: {}", analysis_dir.join("llm_queries.json").display());
+            std::process::exit(2);
+        }
+    } else {
+        None
+    };
+
+    // Build proof plan
+    let proof_plan = if let Some(ref responses) = llm_responses {
+        proof_plan::build_proof_plan_with_llm(
+            &analysis.property_candidates,
+            &analysis.instructions,
+            &analysis.accounts,
+            responses
+        )
+    } else {
+        proof_plan::build_proof_plan(
+            &analysis.property_candidates,
+            &analysis.instructions,
+            &analysis.accounts
+        )
+    };
+
+    // Save proof plan
+    let proof_plan_json = serde_json::to_string_pretty(&proof_plan)?;
+    std::fs::write(analysis_dir.join("proof_plan.json"), proof_plan_json)?;
+
+    let ranked = select_candidates(analysis.property_candidates, top_k);
 
     // Output analysis summary
     let summary = serde_json::json!({

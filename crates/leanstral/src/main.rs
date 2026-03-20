@@ -1,7 +1,9 @@
 mod api;
 mod consolidate;
+mod ir;
 mod project;
 mod prompt;
+mod proof_plan;
 mod validate;
 mod workflow;
 

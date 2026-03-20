@@ -10,4 +10,4 @@
 mod templates;
 mod builder;
 
-pub use builder::{PromptBuilder, ProofPlanIr};
+pub use builder::PromptBuilder;
