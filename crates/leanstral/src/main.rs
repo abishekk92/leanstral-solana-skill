@@ -1,4 +1,5 @@
 mod api;
+mod consolidate;
 mod project;
 mod validate;
 mod workflow;
@@ -114,6 +115,17 @@ enum Commands {
         #[arg(long)]
         analysis_only: bool,
     },
+
+    /// Consolidate multiple proof projects into a single Lean project
+    Consolidate {
+        /// Directory containing proof subdirectories (each with Best.lean)
+        #[arg(long)]
+        input_dir: PathBuf,
+
+        /// Directory to write consolidated Lean project
+        #[arg(long)]
+        output_dir: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -192,6 +204,13 @@ async fn main() -> Result<()> {
                 analysis_only,
             )
             .await?;
+        }
+
+        Commands::Consolidate {
+            input_dir,
+            output_dir,
+        } => {
+            consolidate::consolidate_proofs(&input_dir, &output_dir)?;
         }
     }
 

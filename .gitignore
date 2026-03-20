@@ -59,3 +59,4 @@ bin/leanstral
 # Local agent/editor state
 .agents/
 .claude/
+\n# Generated proof artifacts\nlean_project/\nleanstral_*/

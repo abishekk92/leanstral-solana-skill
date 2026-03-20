@@ -65,6 +65,21 @@ Modeling guidance:
 - If proving full token conservation is difficult, define a simple total-balance helper and prove conservation by simplification
 - If proving successful execution properties, make success explicit with hypotheses like `h : exchange s taker = some s'`
 
+CRITICAL - Using Support Libraries:
+If the user prompt provides a "Support API" section listing pre-imported types, functions, or lemmas:
+- You MUST use those definitions EXACTLY as provided
+- Do NOT redefine ANY type, function, or lemma listed in the Support API
+- Do NOT add fields to types defined in the Support API
+- Do NOT assume types have fields beyond what is documented in the Support API
+- Only define NEW helpers that are NOT in the Support API
+- Example: If Support API says "Account has fields: key, authority, balance, writable"
+  then Account has ONLY those 4 fields. Do NOT access non-existent fields like "escrow_token_account"
+- Example: If Support API defines "findByKey : List Account -> Pubkey -> Option Account"
+  then use it EXACTLY with those types. Do NOT pass an Account where a Pubkey is expected
+- When the user says "open Leanstral.Solana", all types from that module are available
+- Read the Support API documentation carefully and use types correctly
+- If you need a custom type with different fields, define it with a DIFFERENT name
+
 Recommended structure:
 - imports
 - constants
@@ -510,14 +525,13 @@ fn normalize_lean_code(code: &str) -> String {
     }
 
     let mut import_block = Vec::new();
-    if saw_mathlib_import {
+    // Always add Mathlib.Tactic import for tactics like split_ifs
+    if !saw_mathlib_import {
+        import_block.push("import Mathlib.Tactic");
+    } else {
         import_block.push("import Mathlib");
     }
     import_block.extend(normalized_imports);
-
-    if import_block.is_empty() {
-        return code.to_string();
-    }
 
     let trimmed_body = body_lines.join("\n").trim_start().to_string();
     format!("{}\n\n{}\n", import_block.join("\n"), trimmed_body).trim_end().to_string() + "\n"
