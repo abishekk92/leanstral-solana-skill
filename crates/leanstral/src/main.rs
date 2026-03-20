@@ -1,6 +1,7 @@
 mod api;
 mod consolidate;
 mod project;
+mod prompt;
 mod validate;
 mod workflow;
 

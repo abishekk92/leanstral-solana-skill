@@ -6,6 +6,53 @@ Do not leave theorem bodies empty after `:= by`.
 If a proof is incomplete, use `sorry` inside the proof body.
 Prefer a smaller explicit model that compiles over a larger broken one.
 
+## Common Tactic Patterns - READ CAREFULLY
+
+### Rewrite Direction After Option.some.inj
+
+When working with Option types and hypotheses of form `h : someFunc(...) = some result`:
+
+**CRITICAL**: After `apply Option.some.inj at h`, the hypothesis transforms to: `inner_expression = result`
+
+- If your goal contains `result` (the right-hand side), use `rw [← h]` with the LEFTWARD arrow
+- If your goal contains `inner_expression` (the left-hand side), use `rw [h]` without arrow
+
+Example:
+```lean
+-- Given: h : cancelPreservesBalances p_accounts ... = some p_accounts'
+-- Goal: trackedTotal p_accounts = trackedTotal p_accounts'
+
+-- Step 1: Unfold and inject
+rw [cancelPreservesBalances] at h  -- h : some (p_accounts.map ...) = some p_accounts'
+apply Option.some.inj at h         -- h : (p_accounts.map ...) = p_accounts'
+
+-- Step 2: Rewrite in goal
+-- Goal contains p_accounts' (right side of h), so use LEFTWARD arrow
+rw [← h]  -- Replaces p_accounts' with (p_accounts.map ...)
+
+-- Now goal is: trackedTotal p_accounts = trackedTotal (p_accounts.map ...)
+```
+
+**REMEMBER**: After `Option.some.inj`, you almost always need `rw [← h]` (with arrow) to substitute the `some` result in your goal.
+
+### If-Expressions with Proof Bindings
+
+- Use `if h : condition then ...` ONLY when you need the proof `h` in the then/else branches
+- If you don't use `h`, write `if condition then ...` without the binding
+- This avoids "unused variable" warnings
+
+Example:
+```lean
+-- BAD: h is never used
+if h : x = y then some () else none
+
+-- GOOD: no unused variable
+if x = y then some () else none
+
+-- GOOD: h is actually used
+if h : x = y then proof_using_h h else none
+```
+
 Here is an example of a Rust function and the desired Lean proof structure. Follow this format.
 
 ---

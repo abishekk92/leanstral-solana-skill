@@ -1,4 +1,5 @@
 use crate::api::{generate_proofs, BuildStatus, LeanstralMetadata};
+use crate::prompt::{PromptBuilder, ProofPlanIr};
 use crate::validate::build_repair_prompt;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -238,9 +239,17 @@ pub async fn run_full_pipeline(
         Some(&analysis_dir),
     ).map_err(|e| anyhow::anyhow!(e))?;
 
-    // Load and rank candidates
+    // Load analysis and proof plan
     let analysis: AnalysisIr = serde_json::from_str(&std::fs::read_to_string(analysis_dir.join("analysis.json"))?)?;
+    let proof_plan: ProofPlanIr = serde_json::from_str(&std::fs::read_to_string(analysis_dir.join("proof_plan.json"))?)?;
     let ranked = select_candidates(analysis.property_candidates, top_k);
+
+    // Read source code
+    let source = if let Some(ref input_path) = input {
+        std::fs::read_to_string(input_path)?
+    } else {
+        String::new()
+    };
 
     // Output analysis summary
     let summary = serde_json::json!({
@@ -268,11 +277,24 @@ pub async fn run_full_pipeline(
     for candidate in ranked {
         let candidate_output_dir = output_dir.join(&candidate.id);
         std::fs::create_dir_all(&candidate_output_dir)?;
-        let prompt_file = analysis_dir.join(format!("{}.prompt.txt", candidate.id));
+
+        // Find the corresponding obligation from proof plan
+        let obligation = proof_plan
+            .obligations
+            .iter()
+            .find(|o| o.id == candidate.id)
+            .ok_or_else(|| anyhow::anyhow!("No obligation found for candidate {}", candidate.id))?;
+
+        // Generate prompt dynamically
+        let prompt = PromptBuilder::build_prompt(&source, obligation, &proof_plan.supported_surface);
+
+        // Save prompt for debugging/repair
+        let prompt_file = candidate_output_dir.join("generated.prompt.txt");
+        std::fs::write(&prompt_file, &prompt)?;
 
         eprintln!("Generating proof for {}...", candidate.id);
         match generate_proofs(
-            &std::fs::read_to_string(&prompt_file)?,
+            &prompt,
             &candidate_output_dir,
             passes,
             temperature,
