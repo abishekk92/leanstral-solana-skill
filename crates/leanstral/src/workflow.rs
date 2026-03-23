@@ -16,7 +16,7 @@ fn candidate_priority(candidate: &PropertyCandidateIr) -> usize {
 
     let category_score = match candidate.category.as_str() {
         "access_control" => 0,
-        "conservation" => 1,
+        "cpi_correctness" => 1,
         "state_machine" => 2,
         "arithmetic_safety" => 3,
         _ => 4,
@@ -35,7 +35,7 @@ fn select_candidates(candidates: Vec<PropertyCandidateIr>, top_k: usize) -> Vec<
     // First pass: maximize category coverage
     for category in &[
         "access_control",
-        "conservation",
+        "cpi_correctness",
         "state_machine",
         "arithmetic_safety",
     ] {

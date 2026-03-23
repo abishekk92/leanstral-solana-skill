@@ -1,6 +1,6 @@
 use crate::ir::{
-    AccountFieldIr, AccountsStructIr, AnalysisIr, ConstraintIr, InstructionIr, PropertyCandidateIr,
-    TestSignalIr, TransferIr,
+    AccountFieldIr, AccountsStructIr, AnalysisIr, ConstraintIr, InstructionIr,
+    PreconditionIr, PreconditionKind, PropertyCandidateIr, TestSignalIr, TransferIr,
 };
 use anchor_syn::{AccountField, AccountsStruct, ConstraintGroup, Program, Ty};
 use quote::ToTokens;
@@ -133,30 +133,37 @@ struct IdlAccountDef {
 fn parse_idl_instructions(idl: &AnchorIdl) -> Vec<InstructionIr> {
     idl.instructions
         .iter()
-        .map(|ix| InstructionIr {
-            name: ix.name.clone(),
-            context_type: infer_context_type(&ix.name),
-            args: ix
+        .map(|ix| {
+            let args: Vec<String> = ix
                 .args
                 .iter()
                 .map(|arg| format!("{}: {}", arg.name, idl_type_label(&arg.ty)))
-                .collect(),
-            pda_seeds: ix
-                .accounts
-                .iter()
-                .flat_map(|acct| acct.pda.iter())
-                .flat_map(|pda| pda.seeds.iter())
-                .filter_map(seed_label)
-                .collect(),
-            closes_accounts: Vec::new(),
-            auth_signals: ix
-                .accounts
-                .iter()
-                .filter(|acct| acct.signer)
-                .map(|acct| format!("idl signer: {}", acct.name))
-                .collect(),
-            transfers: Vec::new(),
-            evidence_sources: vec!["idl".into()],
+                .collect();
+
+            let preconditions = extract_type_preconditions(&args);
+
+            InstructionIr {
+                name: ix.name.clone(),
+                context_type: infer_context_type(&ix.name),
+                args,
+                pda_seeds: ix
+                    .accounts
+                    .iter()
+                    .flat_map(|acct| acct.pda.iter())
+                    .flat_map(|pda| pda.seeds.iter())
+                    .filter_map(seed_label)
+                    .collect(),
+                closes_accounts: Vec::new(),
+                auth_signals: ix
+                    .accounts
+                    .iter()
+                    .filter(|acct| acct.signer)
+                    .map(|acct| format!("idl signer: {}", acct.name))
+                    .collect(),
+                transfers: Vec::new(),
+                preconditions,
+                evidence_sources: vec!["idl".into()],
+            }
         })
         .collect()
 }
@@ -213,6 +220,7 @@ fn merge_instructions(existing: &mut Vec<InstructionIr>, incoming: Vec<Instructi
             merge_string_vec(&mut current.closes_accounts, instruction.closes_accounts);
             merge_string_vec(&mut current.auth_signals, instruction.auth_signals);
             current.transfers.extend(instruction.transfers);
+            current.preconditions.extend(instruction.preconditions);
             merge_string_vec(&mut current.evidence_sources, instruction.evidence_sources);
             if current.context_type.is_empty() {
                 current.context_type = instruction.context_type;
@@ -251,18 +259,23 @@ fn parse_program(file: &File) -> Result<Vec<InstructionIr>, String> {
 
                 for ix in program.ixs {
                     let body = ix.raw_method.block.to_token_stream().to_string();
+                    let args: Vec<String> = ix
+                        .args
+                        .iter()
+                        .map(|arg| format!("{}: {}", arg.name, arg.raw_arg.ty.to_token_stream()))
+                        .collect();
+
+                    let preconditions = extract_type_preconditions(&args);
+
                     instructions.push(InstructionIr {
                         name: ix.ident.to_string(),
                         context_type: ix.anchor_ident.to_string(),
-                        args: ix
-                            .args
-                            .iter()
-                            .map(|arg| format!("{}: {}", arg.name, arg.raw_arg.ty.to_token_stream()))
-                            .collect(),
+                        args,
                         pda_seeds: extract_seed_literals(&body),
                         closes_accounts: extract_close_targets(&body),
                         auth_signals: extract_auth_signals(&body),
                         transfers: extract_transfers(&body),
+                        preconditions,
                         evidence_sources: vec!["rust".into()],
                     });
                 }
@@ -349,6 +362,13 @@ fn derive_property_candidates(
             || !instruction.auth_signals.is_empty()
             || test_props.contains("access_control")
         {
+            // Extract authorization preconditions
+            let auth_preconditions = if let Some(account) = account_struct {
+                extract_auth_preconditions(&account.fields, &instruction.auth_signals)
+            } else {
+                Vec::new()
+            };
+
             candidates.push(PropertyCandidateIr {
                 id: format!("{}_access_control", instruction.name),
                 category: "access_control".into(),
@@ -356,6 +376,7 @@ fn derive_property_candidates(
                 confidence: "high".into(),
                 relevant_instructions: vec![instruction.name.clone()],
                 evidence: instruction.auth_signals.clone(),
+                preconditions: auth_preconditions,
                 prompt_hint: format!(
                     "Model only the authorization condition for {}. Prove success implies the caller matches the required authority relation.",
                     instruction.name
@@ -363,11 +384,14 @@ fn derive_property_candidates(
             });
         }
 
-        if !instruction.transfers.is_empty() || test_props.contains("conservation") {
+        if !instruction.transfers.is_empty() || test_props.contains("cpi_correctness") {
+            // Type preconditions are relevant for CPI parameter validation
+            let cpi_preconditions = instruction.preconditions.clone();
+
             candidates.push(PropertyCandidateIr {
-                id: format!("{}_conservation", instruction.name),
-                category: "conservation".into(),
-                title: format!("{}: token conservation", instruction.name),
+                id: format!("{}_cpi_correctness", instruction.name),
+                category: "cpi_correctness".into(),
+                title: format!("{}: CPI parameter correctness", instruction.name),
                 confidence: if instruction.transfers.len() > 1 {
                     "high".into()
                 } else {
@@ -379,13 +403,14 @@ fn derive_property_candidates(
                     .iter()
                     .map(|transfer| {
                         format!(
-                            "transfer {:?} -> {:?} amount {:?}",
-                            transfer.from, transfer.to, transfer.amount_expr
+                            "transfer {:?} -> {:?} authority {:?} amount {:?}",
+                            transfer.from, transfer.to, transfer.authority, transfer.amount_expr
                         )
                     })
                     .collect(),
+                preconditions: cpi_preconditions,
                 prompt_hint: format!(
-                    "Model only the balances touched by {}. Prove the total tracked amount is preserved across the transition.",
+                    "Model the CPI parameters constructed by {}. Prove the transfer CPIs have valid parameters: correct program ID, distinct from/to accounts, bounded amounts, and correct authorities.",
                     instruction.name
                 ),
             });
@@ -395,6 +420,13 @@ fn derive_property_candidates(
             || !instruction.closes_accounts.is_empty()
             || test_props.contains("state_machine")
         {
+            // Extract state preconditions
+            let state_preconditions = if let Some(account) = account_struct {
+                extract_state_preconditions(&account.fields)
+            } else {
+                Vec::new()
+            };
+
             candidates.push(PropertyCandidateIr {
                 id: format!("{}_state_machine", instruction.name),
                 category: "state_machine".into(),
@@ -402,6 +434,7 @@ fn derive_property_candidates(
                 confidence: "medium".into(),
                 relevant_instructions: vec![instruction.name.clone()],
                 evidence: instruction.closes_accounts.clone(),
+                preconditions: state_preconditions,
                 prompt_hint: format!(
                     "Model only the lifecycle flag for the state account. Prove {} moves it to a terminal closed state.",
                     instruction.name
@@ -416,6 +449,14 @@ fn derive_property_candidates(
         .any(|arg| arg.contains("u8") || arg.contains("u16") || arg.contains("u32") || arg.contains("u64") || arg.contains("u128"))
         || test_props.contains("arithmetic_safety")
     {
+        // Collect all type bound preconditions from all instructions
+        let arithmetic_preconditions: Vec<PreconditionIr> = instructions
+            .iter()
+            .flat_map(|ix| ix.preconditions.iter())
+            .filter(|p| matches!(p.kind, PreconditionKind::TypeBound { .. }))
+            .cloned()
+            .collect();
+
         candidates.push(PropertyCandidateIr {
             id: "program_arithmetic_safety".into(),
             category: "arithmetic_safety".into(),
@@ -427,6 +468,7 @@ fn derive_property_candidates(
                 .flat_map(|ix| ix.args.iter().cloned())
                 .filter(|arg| arg.contains('u'))
                 .collect(),
+            preconditions: arithmetic_preconditions,
             prompt_hint:
                 "Model only the numeric parameters and arithmetic preconditions that matter. Avoid token/account semantics unless required."
                     .into(),
@@ -634,8 +676,8 @@ fn infer_properties_from_text(text: &str) -> Vec<String> {
     {
         properties.push("access_control".into());
     }
-    if lower.contains("balance") || lower.contains("transfer") || lower.contains("token") {
-        properties.push("conservation".into());
+    if lower.contains("balance") || lower.contains("transfer") || lower.contains("token") || lower.contains("cpi") {
+        properties.push("cpi_correctness".into());
     }
     if lower.contains("close") || lower.contains("reuse") || lower.contains("closed") {
         properties.push("state_machine".into());
@@ -658,4 +700,113 @@ fn has_derive_accounts(attrs: &[Attribute]) -> bool {
         }
         attr.to_token_stream().to_string().contains("Accounts")
     })
+}
+
+/// Extract type bound preconditions from instruction arguments
+fn extract_type_preconditions(args: &[String]) -> Vec<PreconditionIr> {
+    let mut preconditions = Vec::new();
+
+    for arg in args {
+        // Extract type bounds from arguments like "amount: u64"
+        if let Some((var_name, ty)) = arg.split_once(':') {
+            let var_name = var_name.trim();
+            let ty = ty.trim();
+
+            let (bound_type, upper_bound) = match ty {
+                "u8" | "U8" => ("u8", "255"),
+                "u16" | "U16" => ("u16", "65535"),
+                "u32" | "U32" => ("u32", "4294967295"),
+                "u64" | "U64" => ("u64", "18446744073709551615"),
+                "u128" | "U128" => ("u128", "340282366920938463463374607431768211455"),
+                _ => continue,
+            };
+
+            preconditions.push(PreconditionIr {
+                kind: PreconditionKind::TypeBound {
+                    variable: var_name.to_string(),
+                    bound_type: bound_type.to_string(),
+                    upper_bound: upper_bound.to_string(),
+                },
+                description: format!("{} <= {}_MAX", var_name, bound_type.to_uppercase()),
+                source: "argument_type".to_string(),
+            });
+        }
+    }
+
+    preconditions
+}
+
+/// Extract authorization preconditions from constraints
+fn extract_auth_preconditions(
+    fields: &[AccountFieldIr],
+    auth_signals: &[String],
+) -> Vec<PreconditionIr> {
+    let mut preconditions = Vec::new();
+
+    // Extract from signer constraints
+    for field in fields {
+        if field.is_signer {
+            for constraint in &field.constraints {
+                if constraint.kind == "has_one" {
+                    if let Some(target) = &constraint.target {
+                        preconditions.push(PreconditionIr {
+                            kind: PreconditionKind::Authorization {
+                                signer: field.name.clone(),
+                                expected: target.clone(),
+                            },
+                            description: format!("{} must equal {}", field.name, target),
+                            source: "has_one_constraint".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Extract from auth signals
+    for signal in auth_signals {
+        if signal.starts_with("authority: ") {
+            let auth = signal.strip_prefix("authority: ").unwrap_or("");
+            preconditions.push(PreconditionIr {
+                kind: PreconditionKind::Authorization {
+                    signer: "signer".to_string(),
+                    expected: auth.to_string(),
+                },
+                description: format!("signer must equal {}", auth),
+                source: "auth_signal".to_string(),
+            });
+        }
+    }
+
+    preconditions
+}
+
+/// Extract state preconditions from constraints
+fn extract_state_preconditions(fields: &[AccountFieldIr]) -> Vec<PreconditionIr> {
+    let mut preconditions = Vec::new();
+
+    for field in fields {
+        for constraint in &field.constraints {
+            match constraint.kind.as_str() {
+                "close" => {
+                    // Before close, account must not already be closed
+                    preconditions.push(PreconditionIr {
+                        kind: PreconditionKind::StateConstraint {
+                            field: format!("{}.lifecycle", field.name),
+                            operator: "!=".to_string(),
+                            value: "closed".to_string(),
+                        },
+                        description: format!("{} must not already be closed", field.name),
+                        source: "close_constraint".to_string(),
+                    });
+                }
+                "init" => {
+                    // Init requires account doesn't exist yet (implicit)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    preconditions
 }

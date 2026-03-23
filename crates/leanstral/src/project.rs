@@ -16,6 +16,9 @@ const SUPPORT_ACCOUNT: &str = include_str!("../lean_support/Leanstral/Solana/Acc
 const SUPPORT_AUTHORITY: &str = include_str!("../lean_support/Leanstral/Solana/Authority.lean");
 const SUPPORT_STATE: &str = include_str!("../lean_support/Leanstral/Solana/State.lean");
 const SUPPORT_TOKEN: &str = include_str!("../lean_support/Leanstral/Solana/Token.lean");
+const SUPPORT_CPI: &str = include_str!("../lean_support/Leanstral/Solana/Cpi.lean");
+const SUPPORT_VALID: &str = include_str!("../lean_support/Leanstral/Solana/Valid.lean");
+const SUPPORT_SOLANA: &str = include_str!("../lean_support/Leanstral/Solana.lean");
 
 pub fn setup_lean_project(output_dir: &Path) -> Result<()> {
     // Write template files
@@ -32,6 +35,11 @@ pub fn setup_lean_project(output_dir: &Path) -> Result<()> {
     std::fs::write(support_dir.join("lean-toolchain"), SUPPORT_TOOLCHAIN)?;
     std::fs::write(support_dir.join("Leanstral.lean"), SUPPORT_ROOT)?;
 
+    // Write Leanstral/Solana.lean (namespace file)
+    let leanstral_dir = support_dir.join("Leanstral");
+    std::fs::create_dir_all(&leanstral_dir)?;
+    std::fs::write(leanstral_dir.join("Solana.lean"), SUPPORT_SOLANA)?;
+
     // Write Leanstral/Solana modules
     let solana_dir = support_dir.join("Leanstral/Solana");
     std::fs::create_dir_all(&solana_dir)?;
@@ -39,6 +47,8 @@ pub fn setup_lean_project(output_dir: &Path) -> Result<()> {
     std::fs::write(solana_dir.join("Authority.lean"), SUPPORT_AUTHORITY)?;
     std::fs::write(solana_dir.join("State.lean"), SUPPORT_STATE)?;
     std::fs::write(solana_dir.join("Token.lean"), SUPPORT_TOKEN)?;
+    std::fs::write(solana_dir.join("Cpi.lean"), SUPPORT_CPI)?;
+    std::fs::write(solana_dir.join("Valid.lean"), SUPPORT_VALID)?;
 
     Ok(())
 }

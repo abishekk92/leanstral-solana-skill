@@ -3,7 +3,7 @@
 // This module builds Lean-specific proof plans from language-agnostic Anchor analysis IR.
 
 use crate::ir::*;
-use anchor_ir::{InstructionIr, AccountsStructIr, PropertyCandidateIr};
+use anchor_ir::{InstructionIr, AccountsStructIr, PropertyCandidateIr, PreconditionIr, PreconditionKind};
 use anyhow::Result;
 use regex::Regex;
 use std::fs;
@@ -31,16 +31,20 @@ pub fn build_proof_plan(
 
     let obligations: Vec<ProofObligationIr> = candidates
         .iter()
-        .map(|candidate| ProofObligationIr {
-            id: candidate.id.clone(),
-            title: candidate.title.clone(),
-            category: candidate.category.clone(),
-            relevant_instructions: candidate.relevant_instructions.clone(),
-            lean_support_modules: support_modules_for_category(&candidate.category),
-            theorem_shape: theorem_shape_for_category(&candidate.category).into(),
-            theorem_skeleton: generate_theorem_skeleton(candidate, instructions),
-            status: "planned".into(),
-            notes: candidate.evidence.clone(),
+        .map(|candidate| {
+            let spec = build_spec_structure(candidate);
+            ProofObligationIr {
+                id: candidate.id.clone(),
+                title: candidate.title.clone(),
+                category: candidate.category.clone(),
+                relevant_instructions: candidate.relevant_instructions.clone(),
+                lean_support_modules: support_modules_for_category(&candidate.category),
+                theorem_shape: theorem_shape_for_category(&candidate.category).into(),
+                theorem_skeleton: generate_theorem_skeleton(candidate, instructions),
+                spec,
+                status: "planned".into(),
+                notes: candidate.evidence.clone(),
+            }
         })
         .collect();
 
@@ -56,10 +60,11 @@ pub fn build_proof_plan(
                 "Leanstral.Solana.Authority".into(),
                 "Leanstral.Solana.Token".into(),
                 "Leanstral.Solana.State".into(),
+                "Leanstral.Solana.Valid".into(),
             ],
             supported_property_categories: vec![
                 "access_control".into(),
-                "conservation".into(),
+                "cpi_correctness".into(),
                 "state_machine".into(),
                 "arithmetic_safety".into(),
             ],
@@ -102,6 +107,7 @@ pub fn build_proof_plan_with_llm(
             let llm_response = llm_responses.iter()
                 .find(|r| r.query_id == candidate.id);
 
+            let spec = build_spec_structure(candidate);
             ProofObligationIr {
                 id: candidate.id.clone(),
                 title: candidate.title.clone(),
@@ -110,6 +116,7 @@ pub fn build_proof_plan_with_llm(
                 lean_support_modules: support_modules_for_category(&candidate.category),
                 theorem_shape: theorem_shape_for_category(&candidate.category).into(),
                 theorem_skeleton: generate_enhanced_skeleton(candidate, instructions, llm_response),
+                spec,
                 status: "planned".into(),
                 notes: candidate.evidence.clone(),
             }
@@ -128,10 +135,11 @@ pub fn build_proof_plan_with_llm(
                 "Leanstral.Solana.Authority".into(),
                 "Leanstral.Solana.Token".into(),
                 "Leanstral.Solana.State".into(),
+                "Leanstral.Solana.Valid".into(),
             ],
             supported_property_categories: vec![
                 "access_control".into(),
-                "conservation".into(),
+                "cpi_correctness".into(),
                 "state_machine".into(),
                 "arithmetic_safety".into(),
             ],
@@ -152,15 +160,18 @@ fn support_modules_for_category(category: &str) -> Vec<String> {
             "Leanstral.Solana.Account".into(),
             "Leanstral.Solana.Authority".into(),
         ],
-        "conservation" => vec![
+        "cpi_correctness" => vec![
             "Leanstral.Solana.Account".into(),
-            "Leanstral.Solana.Token".into(),
+            "Leanstral.Solana.Cpi".into(),
         ],
         "state_machine" => vec![
             "Leanstral.Solana.Account".into(),
             "Leanstral.Solana.State".into(),
         ],
-        "arithmetic_safety" => vec!["Leanstral.Solana.Token".into()],
+        "arithmetic_safety" => vec![
+            "Leanstral.Solana.Account".into(),
+            "Leanstral.Solana.Valid".into(),
+        ],
         _ => Vec::new(),
     }
 }
@@ -168,7 +179,7 @@ fn support_modules_for_category(category: &str) -> Vec<String> {
 fn theorem_shape_for_category(category: &str) -> &'static str {
     match category {
         "access_control" => "transition_non_none_implies_signer_equals_initializer",
-        "conservation" => "direct_balance_equality_preserves_tracked_total",
+        "cpi_correctness" => "cpi_parameters_are_valid",
         "state_machine" => "cancel_transition_sets_lifecycle_closed",
         "arithmetic_safety" => "transition_preserves_numeric_bounds",
         _ => "custom",
@@ -195,14 +206,33 @@ fn generate_theorem_skeleton(
                 instruction_name, instruction_name
             )
         }
-        "conservation" => {
-            format!(
-                r#"theorem {}_conservation (p_accounts p_accounts' : List Account)
-    (h : {}PreservesBalances p_accounts = some p_accounts') :
-    trackedTotal p_accounts = trackedTotal p_accounts' := by
+        "cpi_correctness" => {
+            let num_transfers = instructions
+                .iter()
+                .find(|ix| ix.name == *instruction_name)
+                .map(|ix| ix.transfers.len())
+                .unwrap_or(1);
+
+            if num_transfers == 1 {
+                format!(
+                    r#"theorem {}_cpi_valid (ctx : {}Context) :
+    let cpi := {}_build_transfer_cpi ctx
+    transferCpiValid cpi ∧
+    cpi.authority = ctx.authority ∧
+    cpi.from ≠ cpi.to := by
   sorry"#,
-                instruction_name, instruction_name
-            )
+                    instruction_name, instruction_name, instruction_name
+                )
+            } else {
+                format!(
+                    r#"theorem {}_cpis_valid (ctx : {}Context) :
+    let cpis := {}_build_transfer_cpis ctx
+    multipleTransfersValid cpis ∧
+    (∀ cpi ∈ cpis, cpi.program = TOKEN_PROGRAM_ID) := by
+  sorry"#,
+                    instruction_name, instruction_name, instruction_name
+                )
+            }
         }
         "state_machine" => {
             format!(
@@ -382,4 +412,103 @@ pub fn parse_llm_responses(response_path: &Path) -> Result<Vec<LlmResponse>> {
     let content = fs::read_to_string(response_path)?;
     let response_set: LlmResponseSet = serde_json::from_str(&content)?;
     Ok(response_set.responses)
+}
+
+/// Build a spec structure from property candidate preconditions
+fn build_spec_structure(candidate: &PropertyCandidateIr) -> Option<SpecStructureIr> {
+    if candidate.preconditions.is_empty() {
+        return None;
+    }
+
+    let instruction_name = candidate.relevant_instructions.first()?;
+    let spec_name = format!("{}Spec", capitalize_first(instruction_name));
+
+    let mut preconditions = Vec::new();
+    let mut parameters = Vec::new();
+
+    for precond in &candidate.preconditions {
+        match &precond.kind {
+            PreconditionKind::TypeBound { variable, bound_type, .. } => {
+                // Add parameter
+                parameters.push(SpecParameterIr {
+                    name: variable.clone(),
+                    lean_type: lean_type_from_rust(bound_type),
+                    description: format!("Value of type {}", bound_type),
+                });
+
+                // Add validity precondition
+                preconditions.push(SpecPreconditionIr {
+                    field_name: format!("{}_valid", variable),
+                    lean_type: "Prop".to_string(),
+                    description: precond.description.clone(),
+                    source: precond.clone(),
+                });
+            }
+            PreconditionKind::Authorization { signer, expected } => {
+                // Add parameter
+                parameters.push(SpecParameterIr {
+                    name: signer.clone(),
+                    lean_type: "Pubkey".to_string(),
+                    description: format!("Signer pubkey"),
+                });
+
+                // Add authorization precondition
+                preconditions.push(SpecPreconditionIr {
+                    field_name: format!("is_{}", expected),
+                    lean_type: "Prop".to_string(),
+                    description: precond.description.clone(),
+                    source: precond.clone(),
+                });
+            }
+            PreconditionKind::StateConstraint { field, .. } => {
+                preconditions.push(SpecPreconditionIr {
+                    field_name: format!("{}_constraint", field.replace(".", "_")),
+                    lean_type: "Prop".to_string(),
+                    description: precond.description.clone(),
+                    source: precond.clone(),
+                });
+            }
+            PreconditionKind::BalanceCheck { account, .. } => {
+                preconditions.push(SpecPreconditionIr {
+                    field_name: format!("{}_balance_check", account),
+                    lean_type: "Prop".to_string(),
+                    description: precond.description.clone(),
+                    source: precond.clone(),
+                });
+            }
+            PreconditionKind::Custom { .. } => {
+                preconditions.push(SpecPreconditionIr {
+                    field_name: "custom_constraint".to_string(),
+                    lean_type: "Prop".to_string(),
+                    description: precond.description.clone(),
+                    source: precond.clone(),
+                });
+            }
+        }
+    }
+
+    Some(SpecStructureIr {
+        spec_name,
+        preconditions,
+        parameters,
+    })
+}
+
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn lean_type_from_rust(rust_type: &str) -> String {
+    match rust_type {
+        "u8" => "U8".to_string(),
+        "u16" => "U16".to_string(),
+        "u32" => "U32".to_string(),
+        "u64" => "U64".to_string(),
+        "u128" => "U128".to_string(),
+        _ => "Nat".to_string(),
+    }
 }

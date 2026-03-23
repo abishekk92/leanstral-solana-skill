@@ -5,16 +5,17 @@
 ✅ **Business Logic**
 - Authorization checks (who can call what)
 - State machine transitions (lifecycle, one-shot safety)
-- Token amount calculations
 - Parameter validation
 
-✅ **Correct API Usage**
-- Passing correct accounts to CPIs
-- Using appropriate authorities
-- Checking return values
+✅ **CPI Interface Correctness**
+- Correct program IDs (TOKEN_PROGRAM_ID, SYSTEM_PROGRAM_ID, etc.)
+- Distinct from/to accounts (no self-transfers)
+- Bounded amounts (within U64 range)
+- Correct authorities for each CPI
+- All required CPIs are constructed
 
 ✅ **Compositional Properties**
-- Multiple transfers preserve total when combined correctly
+- Multiple CPIs have valid parameters
 - State transitions maintain invariants
 
 ## What We DON'T Verify (External Dependencies as Axioms)
@@ -41,20 +42,21 @@
 - Lamport transfers
 - Space allocation
 
-## Trust Assumptions (Axioms)
+## Trust Assumptions
 
-### Token Conservation (Token.lean:54-65)
+### External Program Execution
 
-```lean
-axiom transfer_preserves_total :
-    -- IF: SPL Token transfer succeeds
-    -- THEN: Total balance across accounts is preserved
-```
+**What we trust:**
+- SPL Token program executes correctly when called with valid parameters
+- System program handles account creation and lamport transfers correctly
+- Solana runtime routes CPIs to the correct programs
+- PDAs provide correct authority delegation via seeds
 
-**What this means:**
-- We trust that `anchor_spl::token::transfer` correctly moves tokens
-- We verify our program passes the right parameters
-- We prove conservation by composing these trusted operations
+**What we verify:**
+- CPI parameters are constructed correctly before being passed to external programs
+- Program IDs match expected values (TOKEN_PROGRAM_ID, etc.)
+- Account relationships are valid (from ≠ to, correct authorities, etc.)
+- Amounts are within valid bounds (≤ U64_MAX)
 
 ### Account Model (Account.lean)
 
@@ -84,34 +86,58 @@ axiom Authorized : Pubkey -> Pubkey -> Prop
 
 ## Verification Strategy
 
-### 1. Extract Program Logic Only
+### 1. Extract CPI Construction
 
 From source like:
 ```rust
-let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-token::transfer(cpi_ctx, amount)?;
+let cpi_accounts = Transfer {
+    from: ctx.accounts.taker_deposit.to_account_info(),
+    to: ctx.accounts.initializer_receive.to_account_info(),
+    authority: ctx.accounts.taker.to_account_info(),
+};
+let cpi_ctx = CpiContext::new(token_program, cpi_accounts);
+token::transfer(cpi_ctx, escrow.taker_amount)?;
 ```
 
 We extract:
 ```
-transfer: from=A, to=B, amount=X, authority=A
+TransferCpi {
+  program: TOKEN_PROGRAM_ID,
+  from: taker_deposit,
+  to: initializer_receive,
+  authority: taker,
+  amount: taker_amount
+}
 ```
 
-### 2. Model as State Transition
+### 2. Model as CPI Constructors
 
 ```lean
-def exchangeTransition (accounts : List Account) ... :=
-  some (accounts.map (fun acc =>
-    if acc.authority = taker then { acc with balance := acc.balance - amount }
-    else if acc.authority = initializer then { acc with balance := acc.balance + amount }
-    else acc))
+structure ExchangeContext where
+  taker : Pubkey
+  escrow : Pubkey
+  taker_deposit : Pubkey
+  initializer_receive : Pubkey
+  taker_amount : U64
+  ...
+
+def exchange_build_cpi_1 (ctx : ExchangeContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , from := ctx.taker_deposit
+  , to := ctx.initializer_receive
+  , authority := ctx.taker
+  , amount := ctx.taker_amount }
 ```
 
-### 3. Prove Properties Using Axioms
+### 3. Prove CPI Validity (No Axioms!)
 
 ```lean
-theorem exchange_conservation ... :=
-  four_way_transfer_preserves_total ... -- Apply trusted axiom
+theorem exchange_cpi_valid (ctx : ExchangeContext) :
+    let cpi := exchange_build_cpi_1 ctx
+    transferCpiValid cpi ∧
+    cpi.from ≠ cpi.to ∧
+    cpi.authority = ctx.taker := by
+  simp [exchange_build_cpi_1, transferCpiValid]
 ```
 
 ## Benefits of This Approach
@@ -135,16 +161,19 @@ theorem exchange_conservation ... :=
 
 ## What This Catches
 
-✅ Authorization bugs (wrong signer checks)
-✅ State machine errors (reentrance, closed account use)
-✅ Token accounting errors (wrong amounts, missing transfers)
-✅ Arithmetic overflow/underflow
+✅ **Authorization bugs** - Wrong signer checks, missing constraints
+✅ **State machine errors** - Reentrance, closed account use, invalid transitions
+✅ **CPI parameter bugs** - Wrong program ID, same from/to account, overflow amounts
+✅ **Missing CPIs** - Forgot to construct required transfer
+✅ **Wrong authority** - Using incorrect signer for CPI
+✅ **Arithmetic overflow/underflow** - U64 bounds violations
 
-## What This Misses
+## What This Misses (By Design)
 
-⚠️ SPL Token implementation bugs
-⚠️ Solana runtime vulnerabilities
-⚠️ Account data deserialization issues
-⚠️ Anchor framework bugs
+⚠️ **SPL Token implementation bugs** - We trust it executes transfers correctly
+⚠️ **Solana runtime vulnerabilities** - We trust CPI routing and PDA derivation
+⚠️ **Account data deserialization** - We trust Anchor/Borsh correctly
+⚠️ **Anchor framework bugs** - We trust constraint validation
+⚠️ **External program behavior** - We only verify we call them with valid parameters
 
-These are **out of scope** by design - we verify the program assuming correct infrastructure.
+These are **out of scope** by design - we verify parameter construction, not infrastructure execution.

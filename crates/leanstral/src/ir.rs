@@ -5,6 +5,34 @@
 // These types consume the language-agnostic IR from anchor-ir.
 
 use serde::{Serialize, Deserialize};
+use anchor_ir::PreconditionIr;
+
+// ============================================================================
+// Specification IR
+// ============================================================================
+
+/// Represents a formal specification for an instruction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecStructureIr {
+    pub spec_name: String,
+    pub preconditions: Vec<SpecPreconditionIr>,
+    pub parameters: Vec<SpecParameterIr>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecPreconditionIr {
+    pub field_name: String,
+    pub lean_type: String,
+    pub description: String,
+    pub source: PreconditionIr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpecParameterIr {
+    pub name: String,
+    pub lean_type: String,
+    pub description: String,
+}
 
 // ============================================================================
 // Proof Planning IR
@@ -33,6 +61,7 @@ pub struct ProofObligationIr {
     pub lean_support_modules: Vec<String>,
     pub theorem_shape: String,
     pub theorem_skeleton: String,
+    pub spec: Option<SpecStructureIr>,
     pub status: String,
     pub notes: Vec<String>,
 }

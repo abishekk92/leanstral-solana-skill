@@ -77,6 +77,7 @@ axiom transfer_preserves_total
 
 -- Four-way transfer preserves total when authorities form two distinct pairs
 -- This models an exchange: pair1 does a transfer, pair2 does a transfer
+-- Common in escrow-style programs with two independent balanced transfers
 axiom four_way_transfer_preserves_total
     (p_accounts : List Account)
     (p_from1 p_to1 p_from2 p_to2 : Pubkey)

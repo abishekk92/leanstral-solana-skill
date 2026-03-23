@@ -1,5 +1,69 @@
 // Prompt templates - single source of truth for all LLM guidance
 
+pub const SPEC_PATTERNS: &str = r#"## Specification-Driven Proof Patterns
+
+### Defining Specification Structures
+
+Specifications capture preconditions that must hold before an instruction executes:
+
+```lean
+structure InitializeSpec where
+  preState : EscrowState
+  signer : Pubkey
+  amount : U64
+  -- Preconditions (must be Props)
+  amount_valid : amount.val <= U64_MAX
+  is_initializer : signer = preState.initializer
+  has_balance : preState.balance >= amount.val
+```
+
+### Transition Functions with Specs
+
+Transitions check spec preconditions and produce postconditions:
+
+```lean
+def initializeTransition (spec : InitializeSpec) : Option EscrowState :=
+  if spec.is_initializer ∧ spec.amount_valid ∧ spec.has_balance then
+    some { spec.preState with
+      amount := spec.amount
+      lifecycle := Lifecycle.open
+    }
+  else none
+```
+
+### Theorem Pattern with Specs
+
+Theorems prove: IF spec preconditions hold, THEN postconditions hold after transition:
+
+```lean
+theorem initialize_satisfies_spec (spec : InitializeSpec) (post : EscrowState)
+    (h : initializeTransition spec = some post) :
+    -- Postconditions
+    post.amount = spec.amount ∧
+    post.lifecycle = Lifecycle.open ∧
+    post.amount.val <= U64_MAX := by
+  unfold initializeTransition at h
+  split_ifs at h with h_checks
+  · cases h
+    constructor
+    · rfl
+    constructor
+    · rfl
+    · exact spec.amount_valid
+  · contradiction
+```
+
+### Trust Boundary
+
+- **We prove**: Implementation satisfies spec (preconditions → postconditions)
+- **Runtime checks**: Preconditions actually hold before execution
+- **Framework-agnostic**: Works for any language, not just Anchor
+
+DO NOT attempt to prove preconditions from the transition alone.
+Preconditions are INPUTS that runtime must validate.
+
+"#;
+
 pub const COMMON_PATTERNS: &str = r#"## Common Tactic Patterns - READ CAREFULLY
 
 ### Working with Option types and cases
@@ -80,6 +144,13 @@ IMPORTANT: The Support API section below lists definitions that are ALREADY IMPO
 You MUST use these existing definitions. DO NOT redefine any function, type, or lemma listed in the Support API.
 If you need a definition not in the Support API, you may define it yourself.
 
+SPECIFICATION-DRIVEN VERIFICATION: We use explicit preconditions, not framework assumptions.
+- Preconditions are formal requirements that must hold BEFORE an instruction executes
+- Define a Spec structure capturing all preconditions for the instruction
+- Transition functions take a Spec parameter and check preconditions
+- Runtime is responsible for enforcing preconditions; we prove postconditions GIVEN preconditions hold
+- Example: `structure InitializeSpec where amount : U64; amount_valid : amount <= U64_MAX`
+
 VERIFICATION SCOPE: We verify the program's business logic, NOT external dependencies.
 - CPI operations (token::transfer, system_program calls) are TRUSTED via axioms
 - We verify the program passes correct parameters to these operations
@@ -96,68 +167,158 @@ pub const OUTPUT_REQUIREMENTS: &str = r#"## Output Requirements
 6. Prove this one property only
 7. Do not name a declaration exactly `initialize`; use names like `initializeTransition`, `exchangeTransition`, or `cancelTransition` instead
 8. Do not define or use unqualified global aliases outside the `Leanstral.Solana` surface
-9. Do not use tactic combinators such as `all_goals`, `try`, `repeat`, `first |`, or `admit`; prefer short direct proofs with `simp`, `cases`, `rcases`, `constructor`, and `exact`
+9. Do not use tactic combinators such as `all_goals`, `try`, `repeat`, `first |`, or `admit`; prefer short direct proofs with `unfold`, `cases`, `constructor`, and `exact`
+10. IMPORTANT: Use `unfold` instead of `simp` when you need to preserve if-then-else structure for `split_ifs` tactic
 "#;
 
 // Category-specific hints
 pub fn hint_for_category(category: &str) -> &'static str {
     match category {
         "access_control" => ACCESS_CONTROL_HINT,
-        "conservation" => CONSERVATION_HINT,
+        "cpi_correctness" => CPI_CORRECTNESS_HINT,
         "state_machine" => STATE_MACHINE_HINT,
         "arithmetic_safety" => ARITHMETIC_SAFETY_HINT,
         _ => "Keep the model small and explicit.",
     }
 }
 
-const ACCESS_CONTROL_HINT: &str = r#"Model only the authorization condition that matters for this instruction. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use one local program state structure, typically `EscrowState`, plus `Pubkey`; do not define extra local types like `AccountState`, `CancelPreState`, or helper state wrappers for this v1 access-control theorem. Define `cancelTransition : EscrowState -> Pubkey -> Option Unit` or an equally small transition. Define authorization as a direct `Prop` equality like `signer = preState.initializer`; do not define authorization as an existential over post-state reachability. In authorization predicates and theorem statements, use propositional equality `=` and never boolean equality `==`. Do not use `decide` for v1 access-control proofs. Do not mix propositional equality with boolean equality. In record updates, use Lean syntax `field := value`, never `field = value`. Prefer theorem statements of the exact form `cancelTransition preState signer ≠ none -> signer = preState.initializer` or an equivalent direct authorization predicate. When proving an `if`-based theorem, unfold the transition, split on the `if`, and use the equality hypothesis from the true branch directly with `exact` or `simpa`; do not use `rfl` unless both sides are definitionally equal. Avoid tactic combinators like `all_goals` and `try`."#;
+const ACCESS_CONTROL_HINT: &str = r#"Model only the authorization condition that matters for this instruction. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use one local program state structure, typically `EscrowState`, plus `Pubkey`; do not define extra local types like `AccountState`, `CancelPreState`, or helper state wrappers for this v1 access-control theorem. Define `cancelTransition : EscrowState -> Pubkey -> Option Unit` or an equally small transition. Define authorization as a direct `Prop` equality like `signer = preState.initializer`; do not define authorization as an existential over post-state reachability. In authorization predicates and theorem statements, use propositional equality `=` and never boolean equality `==`. Do not use `decide` for v1 access-control proofs. Do not mix propositional equality with boolean equality. In record updates, use Lean syntax `field := value`, never `field = value`.
 
-const CONSERVATION_HINT: &str = r#"You MUST use 'trackedTotal' from Leanstral.Solana.Token - DO NOT redefine it.
-You MUST use conservation lemmas from the support library: 'trackedTotal_map_id', 'transfer_preserves_total', 'four_way_transfer_preserves_total', etc.
-DO NOT prove your own versions of these lemmas.
-
-IMPORTANT: Here is how to use transfer_preserves_total correctly with all required arguments:
-
-The lemma signature is:
-  transfer_preserves_total (p_accounts : List Account) (p_from_authority p_to_authority : Pubkey) (p_amount : Nat) (p_h_distinct : p_from_authority ≠ p_to_authority)
-
-Example: If you need to prove conservation after transferring 100 tokens from authority A to authority B:
+CRITICAL PATTERN: When proving access control with `h : transition preState signer ≠ none`:
 ```lean
-theorem example (p_accounts : List Account) (p_auth_from p_auth_to : Pubkey)
-    (h_distinct : p_auth_from ≠ p_auth_to) :
-    let post := p_accounts.map (fun acc =>
-      if acc.authority = p_auth_from then { acc with balance := acc.balance - 100 }
-      else if acc.authority = p_auth_to then { acc with balance := acc.balance + 100 }
-      else acc)
-    trackedTotal post = trackedTotal p_accounts := by
-  exact transfer_preserves_total p_accounts p_auth_from p_auth_to 100 h_distinct
+theorem access_control (h : transition preState signer ≠ none) :
+    signer = preState.initializer := by
+  unfold transition at h  -- Use unfold, NOT simp
+  split_ifs at h with h_eq  -- Split on the if-condition
+  · exact h_eq            -- True branch: h_eq proves the goal
+  · contradiction         -- False branch: h says some ≠ none, but we have none
 ```
 
-For FOUR-WAY transfers (like escrow exchange with two independent transfers), use four_way_transfer_preserves_total:
+DO NOT use `simp [transition] at h` before `split_ifs` - use `unfold`.
+
+Prefer theorem statements of the exact form `cancelTransition preState signer ≠ none -> signer = preState.initializer` or an equivalent direct authorization predicate. Avoid tactic combinators like `all_goals` and `try`."#;
+
+const CPI_CORRECTNESS_HINT: &str = r#"Model the CPI (Cross-Program Invocation) parameters that the instruction constructs. Import Leanstral.Solana.Cpi and use the TransferCpi structure and validity predicates.
+
+VERIFICATION SCOPE: We verify that CPI parameters are CONSTRUCTED correctly - NOT that external programs execute correctly.
+- Prove: CPI has correct program ID, distinct from/to accounts, bounded amounts, correct authorities
+- Trust: SPL Token implementation (external dependency)
+
+CRITICAL PATTERN: Define functions that extract CPI parameters from context:
 ```lean
-theorem exchange (p_accounts : List Account)
-    (p_from1 p_to1 p_from2 p_to2 : Pubkey)
-    (p_amount1 p_amount2 : Nat)
-    (h_distinct1 : p_from1 ≠ p_to1)
-    (h_distinct2 : p_from2 ≠ p_to2)
-    (h_cross : p_from1 ≠ p_from2) :
-    trackedTotal (p_accounts.map (fun acc =>
-      if acc.authority = p_from1 then { acc with balance := acc.balance - p_amount1 }
-      else if acc.authority = p_to1 then { acc with balance := acc.balance + p_amount1 }
-      else if acc.authority = p_from2 then { acc with balance := acc.balance - p_amount2 }
-      else if acc.authority = p_to2 then { acc with balance := acc.balance + p_amount2 }
-      else acc)) = trackedTotal p_accounts := by
-  exact four_way_transfer_preserves_total p_accounts p_from1 p_to1 p_from2 p_to2
-    p_amount1 p_amount2 h_distinct1 h_distinct2 h_cross
+structure ExchangeContext where
+  taker : Pubkey
+  escrow : Pubkey
+  taker_deposit : Pubkey
+  initializer_receive : Pubkey
+  escrow_token_account : Pubkey
+  taker_receive : Pubkey
+  taker_amount : U64
+  initializer_amount : U64
+
+def exchange_build_cpi_1 (ctx : ExchangeContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , from := ctx.taker_deposit
+  , to := ctx.initializer_receive
+  , authority := ctx.taker
+  , amount := ctx.taker_amount }
+
+def exchange_build_cpi_2 (ctx : ExchangeContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , from := ctx.escrow_token_account
+  , to := ctx.taker_receive
+  , authority := ctx.escrow
+  , amount := ctx.initializer_amount }
+
+theorem exchange_cpis_valid (ctx : ExchangeContext) :
+    let cpi1 := exchange_build_cpi_1 ctx
+    let cpi2 := exchange_build_cpi_2 ctx
+    -- Correct program IDs
+    cpi1.program = TOKEN_PROGRAM_ID ∧
+    cpi2.program = TOKEN_PROGRAM_ID ∧
+    -- Distinct from/to
+    cpi1.from ≠ cpi1.to ∧
+    cpi2.from ≠ cpi2.to ∧
+    -- Valid amounts
+    transferCpiValid cpi1 ∧
+    transferCpiValid cpi2 ∧
+    -- Correct authorities
+    cpi1.authority = ctx.taker ∧
+    cpi2.authority = ctx.escrow := by
+  simp [exchange_build_cpi_1, exchange_build_cpi_2, transferCpiValid]
 ```
 
-After applying the axiom, you may need `symm` to flip the equation direction.
+For single-transfer instructions:
+```lean
+theorem initialize_cpi_valid (ctx : InitializeContext) :
+    let cpi := initialize_build_cpi ctx
+    transferCpiValid cpi ∧
+    cpi.program = TOKEN_PROGRAM_ID ∧
+    cpi.from ≠ cpi.to ∧
+    cpi.authority = ctx.initializer := by
+  simp [initialize_build_cpi, transferCpiValid]
+```
 
-Model only the three or four tracked balances touched by this instruction. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use the `trackedTotal` function and conservation lemmas from the support library: `trackedTotal_map_id` for balance-preserving updates, `transfer_preserves_total` for two-account transfers, `four_way_transfer_preserves_total` for escrow-style exchanges with two independent transfers. Do not redefine `trackedTotal` or basic lemmas. Prefer a direct theorem over numeric balances and `trackedTotal`, not a large account-state machine. Do not invent helpers like `transfer`, `transferWithSigner`, `state.accounts`, seed lists, or signer arrays unless you define them in the file. Do not wrap the conservation theorem in an `EscrowState` record update unless the theorem truly depends on a record field update. Prefer a shape like: given pre-balances and nonnegativity/precondition inequalities, define post-balances directly and prove `trackedTotal [pre accounts] = trackedTotal [post accounts]`. Apply the support library lemmas to simplify the proof. In record updates, use Lean syntax `field := value`, never `field = value`. If subtraction over `Nat` makes the goal awkward, state enough preconditions and prove the equality with a small explicit arithmetic argument rather than relying on `omega` or `ring` blindly."#;
+DO NOT model token balances or state changes - we only verify parameter construction.
+DO NOT use axioms like transfer_preserves_total - this is about CPI interface correctness.
+Use `simp` to unfold definitions and prove by computation.
 
-const STATE_MACHINE_HINT: &str = r#"Model only the lifecycle flag or closed/open state that matters. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use the `Lifecycle` type and lemmas from the support library: `closes_is_closed`, `closes_was_open`, `closed_irreversible`. Define one small local state structure, typically `EscrowState`, with a `lifecycle : Lifecycle` field. Do not define a custom local `AccountState` when the theorem is really about lifecycle. Prefer a direct theorem shape like `(cancelTransition st).lifecycle = Lifecycle.closed` or `closes st.lifecycle (cancelTransition st).lifecycle`. Apply the support library lemmas to simplify the proof. Do not write theorem statements using placeholders like `some _`; introduce any post-state explicitly if needed."#;
+Keep the context structure minimal - only fields needed for CPI construction.
+In record creation, use Lean syntax `field := value`, never `field = value`."#;
 
-const ARITHMETIC_SAFETY_HINT: &str = r#"Model only the numeric parameters and bounds that matter for this obligation. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Avoid unrelated account semantics. Do not write theorem statements using placeholders like `some _`."#;
+const STATE_MACHINE_HINT: &str = r#"Model only the lifecycle flag or closed/open state that matters. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use the `Lifecycle` type and lemmas from the support library: `closes_is_closed`, `closes_was_open`, `closed_irreversible`.
+
+CRITICAL: Use `structure EscrowState where` NOT type aliases like `def EscrowState : Type := { ... }`.
+Example:
+```lean
+structure EscrowState where
+  lifecycle : Lifecycle
+  initializer : Pubkey
+  ...
+```
+
+CRITICAL PATTERN: When proving state machine properties with `h : transition preState = some postState`:
+```lean
+theorem closes_escrow (h : transition preState = some postState) :
+    postState.lifecycle = Lifecycle.closed := by
+  unfold transition at h  -- Preserve structure
+  cases h                 -- Simplify Option.some
+  rfl                     -- Both sides are definitionally equal
+```
+
+Do not define a custom local `AccountState` when the theorem is really about lifecycle. Prefer a direct theorem shape like `postState.lifecycle = Lifecycle.closed` or `closes st.lifecycle (cancelTransition st).lifecycle`. Apply the support library lemmas to simplify the proof. Do not write theorem statements using placeholders like `some _`; introduce any post-state explicitly if needed."#;
+
+const ARITHMETIC_SAFETY_HINT: &str = r#"Model only the numeric parameters and bounds that matter for this obligation. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently.
+
+SPECIFICATION-DRIVEN APPROACH:
+Use a ValidState predicate to capture all type bounds as preconditions:
+
+```lean
+def ValidState (s : ProgramState) : Prop :=
+  s.amount <= U64_MAX ∧
+  s.taker_amount <= U64_MAX ∧
+  s.bump <= U8_MAX
+
+theorem transition_preserves_validity (spec : TransitionSpec)
+    (pre post : ProgramState)
+    (h_valid : ValidState pre)
+    (h : transition spec pre = some post) :
+    ValidState post := by
+  unfold ValidState at *
+  unfold transition at h
+  cases h
+  -- Prove each component of ValidState for post
+  constructor
+  · -- prove post.amount <= U64_MAX using h_valid
+  constructor
+  · -- prove post.taker_amount <= U64_MAX using h_valid
+  · -- prove post.bump <= U8_MAX using h_valid
+```
+
+DO NOT try to prove `pre.amount <= U64_MAX` from the transition alone - this is a PRECONDITION.
+Use ValidState as a precondition and prove it's PRESERVED by the transition.
+
+Avoid unrelated account/token semantics. Do not write theorem statements using placeholders like `some _`."#;
 
 // Support API documentation
 pub fn support_api_for_modules(modules: &[String]) -> String {
@@ -193,21 +354,29 @@ pub fn support_api_for_modules(modules: &[String]) -> String {
         ]);
     }
 
+    if modules.iter().any(|m| m == "Leanstral.Solana.Cpi") {
+        lines.extend([
+            "-- CPI surface".to_string(),
+            "TransferCpi : Type  -- structure with program, from, to, authority, amount fields".to_string(),
+            "MintToCpi : Type".to_string(),
+            "BurnCpi : Type".to_string(),
+            "CloseCpi : Type".to_string(),
+            "TOKEN_PROGRAM_ID : Pubkey".to_string(),
+            "SYSTEM_PROGRAM_ID : Pubkey".to_string(),
+            "transferCpiValid : TransferCpi -> Prop  -- checks program ID, from ≠ to, amount <= U64.max".to_string(),
+            "mintToCpiValid : MintToCpi -> Prop".to_string(),
+            "burnCpiValid : BurnCpi -> Prop".to_string(),
+            "closeCpiValid : CloseCpi -> Prop".to_string(),
+            "multipleTransfersValid : List TransferCpi -> Prop".to_string(),
+        ]);
+    }
+
     if modules.iter().any(|m| m == "Leanstral.Solana.Token") {
         lines.extend([
-            "-- Token surface".to_string(),
+            "-- Token surface (legacy - prefer Cpi for new proofs)".to_string(),
             "TokenAccount := Account".to_string(),
             "Mint : Type".to_string(),
             "Program : Type".to_string(),
-            "trackedTotal : List Account -> Nat".to_string(),
-            "-- Lemmas:".to_string(),
-            "trackedTotal_nil : trackedTotal [] = 0".to_string(),
-            "trackedTotal_cons : cons preserves total".to_string(),
-            "trackedTotal_append : append distributes over total".to_string(),
-            "trackedTotal_map_id : mapping preserving balance preserves total".to_string(),
-            "balance_update_preserves_total : zero-delta update preserves total".to_string(),
-            "transfer_preserves_total : two-account transfer preserves total".to_string(),
-            "four_way_transfer_preserves_total : four-account transfer (two independent pairs) preserves total".to_string(),
         ]);
     }
 
@@ -220,6 +389,25 @@ pub fn support_api_for_modules(modules: &[String]) -> String {
             "closed_irreversible : closed cannot transition to open".to_string(),
             "closes_is_closed : closes implies result is closed".to_string(),
             "closes_was_open : closes implies original was open".to_string(),
+        ]);
+    }
+
+    if modules.iter().any(|m| m == "Leanstral.Solana.Valid") {
+        lines.extend([
+            "-- Validity surface".to_string(),
+            "U8_MAX : Nat := 255".to_string(),
+            "U16_MAX : Nat := 65535".to_string(),
+            "U32_MAX : Nat := 4294967295".to_string(),
+            "U64_MAX : Nat := 18446744073709551615".to_string(),
+            "U128_MAX : Nat := 340282366920938463463374607431768211455".to_string(),
+            "valid_u8 : Nat -> Prop".to_string(),
+            "valid_u16 : Nat -> Prop".to_string(),
+            "valid_u32 : Nat -> Prop".to_string(),
+            "valid_u64 : Nat -> Prop".to_string(),
+            "valid_u128 : Nat -> Prop".to_string(),
+            "-- Lemmas:".to_string(),
+            "valid_u64_preserved_by_zero : validity preserved when setting to zero".to_string(),
+            "valid_u64_preserved_by_same : validity preserved when unchanged".to_string(),
         ]);
     }
 
