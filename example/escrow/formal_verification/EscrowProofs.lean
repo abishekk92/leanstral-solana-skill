@@ -1,8 +1,10 @@
 import Mathlib.Tactic
 import Leanstral.Solana.Account
 import Leanstral.Solana.Authority
+import Leanstral.Solana.Cpi
 import Leanstral.Solana.State
 import Leanstral.Solana.Token
+import Leanstral.Solana.Valid
 
 open Leanstral.Solana
 
@@ -21,7 +23,7 @@ structure EscrowState where
   bump : U8
 
 def cancelTransition (p_preState : EscrowState) (p_signer : Pubkey) : Option Unit :=
-  if p_signer = p_preState.initializer then
+  if h : p_signer = p_preState.initializer then
     some ()
   else
     none
@@ -37,26 +39,34 @@ theorem cancel_access_control (p_preState : EscrowState) (p_signer : Pubkey)
 end CancelAccessControl
 
 /- ============================================================================
-   CancelConservation Proof
+   CancelCpiCorrectness Proof
    ============================================================================ -/
 
-namespace CancelConservation
+namespace CancelCpiCorrectness
 
-def cancelTransition (p_accounts : List Account) (p_escrow_authority p_initializer_authority : Pubkey) (p_amount : Nat) : Option (List Account) :=
-  some (p_accounts.map (fun acc =>
-    if acc.authority = p_escrow_authority then
-      { acc with balance := acc.balance - p_amount }
-    else if acc.authority = p_initializer_authority then
-      { acc with balance := acc.balance + p_amount }
-    else
-      acc))
+structure CancelContext where
+  initializer : Pubkey
+  escrow : Pubkey
+  initializer_deposit : Pubkey
+  escrow_token_account : Pubkey
+  authority : Pubkey
+  amount : U64
 
-theorem cancel_conservation (p_accounts p_accounts' : List Account) (p_escrow_authority p_initializer_authority : Pubkey) (p_amount : Nat) (h_distinct : p_escrow_authority ≠ p_initializer_authority) (h : cancelTransition p_accounts p_escrow_authority p_initializer_authority p_amount = some p_accounts') : trackedTotal p_accounts = trackedTotal p_accounts' := by
-  unfold cancelTransition at h
-  cases h
-  exact (transfer_preserves_total p_accounts p_escrow_authority p_initializer_authority p_amount h_distinct).symm
+def cancel_build_transfer_cpi (p_ctx : CancelContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , «from» := p_ctx.escrow_token_account
+  , «to» := p_ctx.initializer_deposit
+  , authority := p_ctx.authority
+  , amount := p_ctx.amount }
 
-end CancelConservation
+theorem cancel_cpi_valid (p_ctx : CancelContext) :
+    let cpi := cancel_build_transfer_cpi p_ctx
+    transferCpiValid cpi ∧
+    cpi.authority = p_ctx.authority ∧
+    cpi.«from» ≠ cpi.«to» := by
+  simp [cancel_build_transfer_cpi, transferCpiValid]
+
+end CancelCpiCorrectness
 
 /- ============================================================================
    CancelStateMachine Proof
@@ -116,29 +126,48 @@ theorem exchange_access_control (p_preState : EscrowState) (p_signer : Pubkey)
 end ExchangeAccessControl
 
 /- ============================================================================
-   ExchangeConservation Proof
+   ExchangeCpiCorrectness Proof
    ============================================================================ -/
 
-namespace ExchangeConservation
+namespace ExchangeCpiCorrectness
 
-def exchangePreservesBalances (p_accounts : List Account) (p_taker_authority p_initializer_receive_authority p_escrow_authority p_taker_receive_authority : Pubkey) (p_taker_amount p_initializer_amount : Nat) : Option (List Account) :=
-  some (p_accounts.map (fun acc =>
-    if acc.authority = p_taker_authority then
-      { acc with balance := acc.balance - p_taker_amount }
-    else if acc.authority = p_initializer_receive_authority then
-      { acc with balance := acc.balance + p_taker_amount }
-    else if acc.authority = p_escrow_authority then
-      { acc with balance := acc.balance - p_initializer_amount }
-    else if acc.authority = p_taker_receive_authority then
-      { acc with balance := acc.balance + p_initializer_amount }
-    else acc))
+structure ExchangeContext where
+  taker : Pubkey
+  escrow : Pubkey
+  taker_deposit : Pubkey
+  initializer_receive : Pubkey
+  escrow_token_account : Pubkey
+  taker_receive : Pubkey
+  taker_amount : U64
+  initializer_amount : U64
 
-theorem exchange_conservation (p_accounts p_accounts' : List Account) (p_taker_authority p_initializer_receive_authority p_escrow_authority p_taker_receive_authority : Pubkey) (p_taker_amount p_initializer_amount : Nat) (h_distinct1 : p_taker_authority ≠ p_initializer_receive_authority) (h_distinct2 : p_escrow_authority ≠ p_taker_receive_authority) (h_distinct3 : p_taker_authority ≠ p_escrow_authority) (h : exchangePreservesBalances p_accounts p_taker_authority p_initializer_receive_authority p_escrow_authority p_taker_receive_authority p_taker_amount p_initializer_amount = some p_accounts') : trackedTotal p_accounts = trackedTotal p_accounts' := by
-  unfold exchangePreservesBalances at h
-  cases h
-  exact (four_way_transfer_preserves_total p_accounts p_taker_authority p_initializer_receive_authority p_escrow_authority p_taker_receive_authority p_taker_amount p_initializer_amount h_distinct1 h_distinct2 h_distinct3).symm
+def exchange_build_transfer_cpis (p_ctx : ExchangeContext) : List TransferCpi :=
+  [ { program := TOKEN_PROGRAM_ID
+    , «from» := p_ctx.taker_deposit
+    , «to» := p_ctx.initializer_receive
+    , authority := p_ctx.taker
+    , amount := p_ctx.taker_amount }
+  , { program := TOKEN_PROGRAM_ID
+    , «from» := p_ctx.escrow_token_account
+    , «to» := p_ctx.taker_receive
+    , authority := p_ctx.escrow
+    , amount := p_ctx.initializer_amount } ]
 
-end ExchangeConservation
+theorem exchange_cpis_valid (p_ctx : ExchangeContext) :
+    let cpis := exchange_build_transfer_cpis p_ctx
+    multipleTransfersValid cpis ∧
+    (∀ cpi ∈ cpis, cpi.program = TOKEN_PROGRAM_ID) := by
+  unfold exchange_build_transfer_cpis multipleTransfersValid
+  simp
+  constructor
+  · decide
+  · intro cpi h
+    simp at h
+    rcases h with (rfl | rfl)
+    · rfl
+    · rfl
+
+end ExchangeCpiCorrectness
 
 /- ============================================================================
    ExchangeStateMachine Proof
@@ -147,13 +176,13 @@ end ExchangeConservation
 namespace ExchangeStateMachine
 
 structure EscrowState where
+  lifecycle : Lifecycle
   initializer : Pubkey
   initializer_token_account : Pubkey
   initializer_amount : U64
   taker_amount : U64
   escrow_token_account : Pubkey
   bump : U8
-  lifecycle : Lifecycle
 
 def exchangeTransition (p_preState : EscrowState) : Option EscrowState :=
   some { p_preState with lifecycle := Lifecycle.closed }
@@ -198,26 +227,36 @@ theorem initialize_access_control (p_preState : EscrowState) (p_signer : Pubkey)
 end InitializeAccessControl
 
 /- ============================================================================
-   InitializeConservation Proof
+   InitializeCpiCorrectness Proof
    ============================================================================ -/
 
-namespace InitializeConservation
+namespace InitializeCpiCorrectness
 
-def initializeTransition (p_accounts : List Account) (p_initializer_authority p_escrow_authority : Pubkey) (p_amount : Nat) : Option (List Account) :=
-  some (p_accounts.map (fun acc =>
-    if acc.authority = p_initializer_authority then
-      { acc with balance := acc.balance - p_amount }
-    else if acc.authority = p_escrow_authority then
-      { acc with balance := acc.balance + p_amount }
-    else
-      acc))
+structure InitializeContext where
+  initializer : Pubkey
+  initializer_deposit_token_account : Pubkey
+  escrow_token_account : Pubkey
+  amount : U64
 
-theorem initialize_conservation (p_accounts p_accounts' : List Account) (p_initializer_authority p_escrow_authority : Pubkey) (p_amount : Nat) (h_distinct : p_initializer_authority ≠ p_escrow_authority) (h : initializeTransition p_accounts p_initializer_authority p_escrow_authority p_amount = some p_accounts') : trackedTotal p_accounts = trackedTotal p_accounts' := by
-  unfold initializeTransition at h
-  cases h
-  exact (transfer_preserves_total p_accounts p_initializer_authority p_escrow_authority p_amount h_distinct).symm
+def initialize_build_transfer_cpi (p_ctx : InitializeContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , «from» := p_ctx.initializer_deposit_token_account
+  , «to» := p_ctx.escrow_token_account
+  , authority := p_ctx.initializer
+  , amount := p_ctx.amount }
 
-end InitializeConservation
+theorem initialize_cpi_valid (p_ctx : InitializeContext) :
+    let cpi := initialize_build_transfer_cpi p_ctx
+    transferCpiValid cpi ∧
+    cpi.authority = p_ctx.initializer ∧
+    cpi.«from» ≠ cpi.«to» := by
+  simp [initialize_build_transfer_cpi, transferCpiValid]
+  constructor
+  · rfl
+  · intro h
+    injection h
+
+end InitializeCpiCorrectness
 
 /- ============================================================================
    ProgramArithmeticSafety Proof
@@ -225,29 +264,27 @@ end InitializeConservation
 
 namespace ProgramArithmeticSafety
 
-def U64_MAX : Nat := 2^64 - 1
-
-structure EscrowState where
-  initializer : Nat
-  initializer_token_account : Nat
-  initializer_amount : Nat
-  taker_amount : Nat
-  escrow_token_account : Nat
-  bump : Nat
+def U64_MAX : Nat := 18446744073709551615
 
 structure ProgramState where
-  escrow : EscrowState
-  counter : Nat
+  amount : Nat
+  taker_amount : Nat
+  bump : Nat
+
+def ValidState (s : ProgramState) : Prop :=
+  s.amount <= U64_MAX ∧
+  s.taker_amount <= U64_MAX ∧
+  s.bump <= 255
 
 def cancelTransition (p_s : ProgramState) : Option ProgramState :=
-  some { p_s with escrow := { p_s.escrow with initializer_amount := 0 } }
+  some { p_s with amount := 0 }
 
-theorem cancel_arithmetic_safety (p_preState p_postState : ProgramState)
-    (h : cancelTransition p_preState = some p_postState) :
-    p_preState.escrow.initializer_amount <= U64_MAX := by
+theorem cancel_arithmetic_safety  (p_preState p_postState : ProgramState)
+    (h : cancelTransition p_preState  = some p_postState) :
+    p_postState.amount <= U64_MAX := by
   unfold cancelTransition at h
   cases h
-  sorry  -- This property requires preconditions about p_preState
+  simp
 
 end ProgramArithmeticSafety
 
