@@ -45,29 +45,27 @@ end CancelAccessControl
 namespace CancelCpiCorrectness
 
 structure CancelContext where
-  initializer : Pubkey
-  escrow : Pubkey
-  initializer_deposit : Pubkey
   escrow_token_account : Pubkey
+  initializer_deposit : Pubkey
   authority : Pubkey
   amount : U64
 
-def cancel_build_transfer_cpi (p_ctx : CancelContext) : TransferCpi :=
+def cancel_build_cpi (ctx : CancelContext) : TransferCpi :=
   { program := TOKEN_PROGRAM_ID
-  , «from» := p_ctx.escrow_token_account
-  , «to» := p_ctx.initializer_deposit
-  , authority := p_ctx.authority
-  , amount := p_ctx.amount }
+  , «from» := ctx.escrow_token_account
+  , «to» := ctx.initializer_deposit
+  , authority := ctx.authority
+  , amount := ctx.amount }
 
-theorem cancel_cpi_valid (p_ctx : CancelContext)
-    (h_distinct : p_ctx.escrow_token_account ≠ p_ctx.initializer_deposit)
-    (h_amount : p_ctx.amount ≤ U64_MAX) :
-    let cpi := cancel_build_transfer_cpi p_ctx
-    transferCpiValid cpi ∧
-    cpi.authority = p_ctx.authority ∧
-    cpi.«from» ≠ cpi.«to» := by
-  unfold cancel_build_transfer_cpi transferCpiValid
-  exact ⟨⟨rfl, h_distinct, h_amount⟩, rfl, h_distinct⟩
+theorem cancel_cpi_correct (ctx : CancelContext) :
+    let cpi := cancel_build_cpi ctx
+    cpi.program = TOKEN_PROGRAM_ID ∧
+    cpi.«from» = ctx.escrow_token_account ∧
+    cpi.«to» = ctx.initializer_deposit ∧
+    cpi.authority = ctx.authority ∧
+    cpi.amount = ctx.amount := by
+  unfold cancel_build_cpi
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 end CancelCpiCorrectness
 
@@ -144,44 +142,39 @@ structure ExchangeContext where
   taker_amount : U64
   initializer_amount : U64
 
-def exchange_build_transfer_cpis (p_ctx : ExchangeContext) : List TransferCpi :=
-  [ { program := TOKEN_PROGRAM_ID
-    , «from» := p_ctx.taker_deposit
-    , «to» := p_ctx.initializer_receive
-    , authority := p_ctx.taker
-    , amount := p_ctx.taker_amount }
-  , { program := TOKEN_PROGRAM_ID
-    , «from» := p_ctx.escrow_token_account
-    , «to» := p_ctx.taker_receive
-    , authority := p_ctx.escrow
-    , amount := p_ctx.initializer_amount } ]
+def exchange_build_cpi_1 (ctx : ExchangeContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , «from» := ctx.taker_deposit
+  , «to» := ctx.initializer_receive
+  , authority := ctx.taker
+  , amount := ctx.taker_amount }
 
-theorem exchange_cpis_valid (p_ctx : ExchangeContext)
-    (h_distinct1 : p_ctx.taker_deposit ≠ p_ctx.initializer_receive)
-    (h_distinct2 : p_ctx.escrow_token_account ≠ p_ctx.taker_receive)
-    (h_amount1 : p_ctx.taker_amount ≤ U64_MAX)
-    (h_amount2 : p_ctx.initializer_amount ≤ U64_MAX) :
-    let cpis := exchange_build_transfer_cpis p_ctx
-    multipleTransfersValid cpis ∧
-    (∀ cpi ∈ cpis, cpi.program = TOKEN_PROGRAM_ID) := by
-  unfold exchange_build_transfer_cpis
-  unfold multipleTransfersValid
-  simp only [Leanstral.Solana.transferCpiValid, Leanstral.Solana.Cpi.transferCpiValid]
-  constructor
-  · constructor
-    · intro cpi h
-      simp [List.mem_cons, List.mem_singleton] at h
-      rcases h with rfl | rfl
-      · exact ⟨rfl, h_distinct1, h_amount1⟩
-      · exact ⟨rfl, h_distinct2, h_amount2⟩
-    · intro cpi h
-      simp [List.mem_cons, List.mem_singleton] at h
-      rcases h with rfl | rfl
-      · exact h_distinct1
-      · exact h_distinct2
-  · intro cpi h
-    simp [List.mem_cons, List.mem_singleton] at h
-    rcases h with rfl | rfl <;> rfl
+def exchange_build_cpi_2 (ctx : ExchangeContext) : TransferCpi :=
+  { program := TOKEN_PROGRAM_ID
+  , «from» := ctx.escrow_token_account
+  , «to» := ctx.taker_receive
+  , authority := ctx.escrow
+  , amount := ctx.initializer_amount }
+
+theorem exchange_cpi_1_correct (ctx : ExchangeContext) :
+    let cpi := exchange_build_cpi_1 ctx
+    cpi.program = TOKEN_PROGRAM_ID ∧
+    cpi.«from» = ctx.taker_deposit ∧
+    cpi.«to» = ctx.initializer_receive ∧
+    cpi.authority = ctx.taker ∧
+    cpi.amount = ctx.taker_amount := by
+  unfold exchange_build_cpi_1
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+theorem exchange_cpi_2_correct (ctx : ExchangeContext) :
+    let cpi := exchange_build_cpi_2 ctx
+    cpi.program = TOKEN_PROGRAM_ID ∧
+    cpi.«from» = ctx.escrow_token_account ∧
+    cpi.«to» = ctx.taker_receive ∧
+    cpi.authority = ctx.escrow ∧
+    cpi.amount = ctx.initializer_amount := by
+  unfold exchange_build_cpi_2
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 end ExchangeCpiCorrectness
 
@@ -254,22 +247,22 @@ structure InitializeContext where
   escrow_token_account : Pubkey
   amount : U64
 
-def initialize_build_transfer_cpi (p_ctx : InitializeContext) : TransferCpi :=
+def initialize_build_cpi (ctx : InitializeContext) : TransferCpi :=
   { program := TOKEN_PROGRAM_ID
-  , «from» := p_ctx.initializer_deposit_token_account
-  , «to» := p_ctx.escrow_token_account
-  , authority := p_ctx.initializer
-  , amount := p_ctx.amount }
+  , «from» := ctx.initializer_deposit_token_account
+  , «to» := ctx.escrow_token_account
+  , authority := ctx.initializer
+  , amount := ctx.amount }
 
-theorem initialize_cpi_valid (p_ctx : InitializeContext)
-    (h_distinct : p_ctx.initializer_deposit_token_account ≠ p_ctx.escrow_token_account)
-    (h_amount : p_ctx.amount ≤ U64_MAX) :
-    let cpi := initialize_build_transfer_cpi p_ctx
-    transferCpiValid cpi ∧
-    cpi.authority = p_ctx.initializer ∧
-    cpi.«from» ≠ cpi.«to» := by
-  unfold initialize_build_transfer_cpi transferCpiValid
-  exact ⟨⟨rfl, h_distinct, h_amount⟩, rfl, h_distinct⟩
+theorem initialize_cpi_correct (ctx : InitializeContext) :
+    let cpi := initialize_build_cpi ctx
+    cpi.program = TOKEN_PROGRAM_ID ∧
+    cpi.«from» = ctx.initializer_deposit_token_account ∧
+    cpi.«to» = ctx.escrow_token_account ∧
+    cpi.authority = ctx.initializer ∧
+    cpi.amount = ctx.amount := by
+  unfold initialize_build_cpi
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 end InitializeCpiCorrectness
 

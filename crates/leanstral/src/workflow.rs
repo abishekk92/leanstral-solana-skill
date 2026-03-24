@@ -1,5 +1,4 @@
 use crate::api::{generate_proofs, BuildStatus, LeanstralMetadata};
-use crate::ir::LlmQuerySet;
 use crate::proof_plan;
 use crate::prompt::PromptBuilder;
 use crate::validate::build_repair_prompt;
@@ -230,57 +229,18 @@ pub async fn run_full_pipeline(
     // Load analysis
     let analysis: AnalysisIr = serde_json::from_str(&std::fs::read_to_string(analysis_dir.join("analysis.json"))?)?;
 
-    // Read source code for LLM query generation
+    // Read source code for prompt generation
     let source = if let Some(ref input_path) = input {
         std::fs::read_to_string(input_path)?
     } else {
         String::new()
     };
 
-    // Generate LLM queries for complex properties
-    let queries = proof_plan::generate_llm_queries(
+    // Build proof plan
+    let proof_plan = proof_plan::build_proof_plan(
         &analysis.property_candidates,
         &analysis.instructions,
-        &source
     );
-
-    // Check for LLM responses
-    let llm_responses = if !queries.is_empty() {
-        let response_path = analysis_dir.join("llm_responses.json");
-        if response_path.exists() {
-            Some(proof_plan::parse_llm_responses(&response_path)?)
-        } else {
-            // Save queries and exit
-            let query_set = LlmQuerySet {
-                version: "1.0".into(),
-                queries,
-            };
-            let queries_json = serde_json::to_string_pretty(&query_set)?;
-            std::fs::write(analysis_dir.join("llm_queries.json"), queries_json)?;
-
-            eprintln!("🤖 LLM assistance needed. Please analyze llm_queries.json and provide llm_responses.json");
-            eprintln!("Query file: {}", analysis_dir.join("llm_queries.json").display());
-            std::process::exit(2);
-        }
-    } else {
-        None
-    };
-
-    // Build proof plan
-    let proof_plan = if let Some(ref responses) = llm_responses {
-        proof_plan::build_proof_plan_with_llm(
-            &analysis.property_candidates,
-            &analysis.instructions,
-            &analysis.accounts,
-            responses
-        )
-    } else {
-        proof_plan::build_proof_plan(
-            &analysis.property_candidates,
-            &analysis.instructions,
-            &analysis.accounts
-        )
-    };
 
     // Save proof plan
     let proof_plan_json = serde_json::to_string_pretty(&proof_plan)?;

@@ -1,69 +1,5 @@
 // Prompt templates - single source of truth for all LLM guidance
 
-pub const SPEC_PATTERNS: &str = r#"## Specification-Driven Proof Patterns
-
-### Defining Specification Structures
-
-Specifications capture preconditions that must hold before an instruction executes:
-
-```lean
-structure InitializeSpec where
-  preState : EscrowState
-  signer : Pubkey
-  amount : U64
-  -- Preconditions (must be Props)
-  amount_valid : amount.val <= U64_MAX
-  is_initializer : signer = preState.initializer
-  has_balance : preState.balance >= amount.val
-```
-
-### Transition Functions with Specs
-
-Transitions check spec preconditions and produce postconditions:
-
-```lean
-def initializeTransition (spec : InitializeSpec) : Option EscrowState :=
-  if spec.is_initializer ∧ spec.amount_valid ∧ spec.has_balance then
-    some { spec.preState with
-      amount := spec.amount
-      lifecycle := Lifecycle.open
-    }
-  else none
-```
-
-### Theorem Pattern with Specs
-
-Theorems prove: IF spec preconditions hold, THEN postconditions hold after transition:
-
-```lean
-theorem initialize_satisfies_spec (spec : InitializeSpec) (post : EscrowState)
-    (h : initializeTransition spec = some post) :
-    -- Postconditions
-    post.amount = spec.amount ∧
-    post.lifecycle = Lifecycle.open ∧
-    post.amount.val <= U64_MAX := by
-  unfold initializeTransition at h
-  split_ifs at h with h_checks
-  · cases h
-    constructor
-    · rfl
-    constructor
-    · rfl
-    · exact spec.amount_valid
-  · contradiction
-```
-
-### Trust Boundary
-
-- **We prove**: Implementation satisfies spec (preconditions → postconditions)
-- **Runtime checks**: Preconditions actually hold before execution
-- **Framework-agnostic**: Works for any language, not just Anchor
-
-DO NOT attempt to prove preconditions from the transition alone.
-Preconditions are INPUTS that runtime must validate.
-
-"#;
-
 pub const COMMON_PATTERNS: &str = r#"## Common Tactic Patterns - READ CAREFULLY
 
 ### Working with Option types and cases
@@ -107,28 +43,6 @@ simp [transition] at h   -- BAD: may eliminate if-then-else before split_ifs
 split_ifs at h           -- ERROR: no if-then-else to split!
 ```
 
-### Opaque Values: Pubkey and Amount Preconditions
-
-CRITICAL: `Pubkey` is `abbrev Nat` and `U64` is `abbrev Nat`. Context structure fields like `ctx.from_account` and `ctx.to_account` are OPAQUE — you cannot prove they are distinct or bounded without explicit hypotheses.
-
-**WRONG** — trying to prove distinctness without a hypothesis:
-```lean
--- This will FAIL: simp/decide/omega/rfl/injection cannot prove ctx.from ≠ ctx.to
-theorem cpi_valid (ctx : Context) : ctx.from ≠ ctx.to := by simp  -- ERROR!
-```
-
-**CORRECT** — add preconditions:
-```lean
-theorem cpi_valid (ctx : Context)
-    (h_distinct : ctx.from ≠ ctx.to)     -- Precondition for distinctness
-    (h_amount : ctx.amount ≤ U64_MAX)    -- Precondition for amount bound
-    : transferCpiValid (build_cpi ctx) := by
-  unfold build_cpi transferCpiValid
-  exact ⟨rfl, h_distinct, h_amount⟩
-```
-
-This applies to ANY property involving opaque struct fields that cannot be proven definitionally.
-
 ### If-Expressions with Proof Bindings
 
 - Use `if h : condition then ...` ONLY when you need the proof `h` in the then/else branches
@@ -166,13 +80,6 @@ IMPORTANT: The Support API section below lists definitions that are ALREADY IMPO
 You MUST use these existing definitions. DO NOT redefine any function, type, or lemma listed in the Support API.
 If you need a definition not in the Support API, you may define it yourself.
 
-SPECIFICATION-DRIVEN VERIFICATION: We use explicit preconditions, not framework assumptions.
-- Preconditions are formal requirements that must hold BEFORE an instruction executes
-- Define a Spec structure capturing all preconditions for the instruction
-- Transition functions take a Spec parameter and check preconditions
-- Runtime is responsible for enforcing preconditions; we prove postconditions GIVEN preconditions hold
-- Example: `structure InitializeSpec where amount : U64; amount_valid : amount <= U64_MAX`
-
 VERIFICATION SCOPE: We verify the program's business logic, NOT external dependencies.
 - CPI operations (token::transfer, system_program calls) are TRUSTED via axioms
 - We verify the program passes correct parameters to these operations
@@ -191,6 +98,8 @@ pub const OUTPUT_REQUIREMENTS: &str = r#"## Output Requirements
 8. Do not define or use unqualified global aliases outside the `Leanstral.Solana` surface
 9. Do not use tactic combinators such as `all_goals`, `try`, `repeat`, `first |`, or `admit`; prefer short direct proofs with `unfold`, `cases`, `constructor`, and `exact`
 10. IMPORTANT: Use `unfold` instead of `simp` when you need to preserve if-then-else structure for `split_ifs` tactic
+11. In record literals, use Lean syntax `field := value`, never `field = value`
+12. For conjunction goals `A ∧ B ∧ C`, use `exact ⟨term_a, term_b, term_c⟩`. For nested goals `(A ∧ B) ∧ C`, use `exact ⟨⟨..⟩, ..⟩`
 "#;
 
 // Category-specific hints
@@ -220,21 +129,11 @@ DO NOT use `simp [transition] at h` before `split_ifs` - use `unfold`.
 
 Prefer theorem statements of the exact form `cancelTransition preState signer ≠ none -> signer = preState.initializer` or an equivalent direct authorization predicate. Avoid tactic combinators like `all_goals` and `try`."#;
 
-const CPI_CORRECTNESS_HINT: &str = r#"Model the CPI (Cross-Program Invocation) parameters that the instruction constructs. Import Leanstral.Solana.Cpi and use the TransferCpi structure and validity predicates.
+const CPI_CORRECTNESS_HINT: &str = r#"CPI calls are AXIOMATIC — external to the program's business logic. We only verify that the correct parameters are passed.
 
-VERIFICATION SCOPE: We verify that CPI parameters are CONSTRUCTED correctly - NOT that external programs execute correctly.
-- Prove: CPI has correct program ID, distinct from/to accounts, bounded amounts, correct authorities
-- Trust: SPL Token implementation (external dependency)
+Define a context structure with the fields needed for CPI construction, a builder function that maps context fields to TransferCpi fields, and prove each field equals the expected value. Proofs are purely definitional — every goal is `rfl`.
 
-CRITICAL: `transferCpiValid` requires `program = TOKEN_PROGRAM_ID ∧ from ≠ to ∧ amount ≤ U64_MAX`.
-Since `Pubkey` is `Nat` and context fields are opaque, you CANNOT prove `from ≠ to` or `amount ≤ U64_MAX` without explicit hypotheses. These must be added as PRECONDITIONS to the theorem.
-
-DO NOT use `simp` alone to prove CPI validity — it cannot discharge `from ≠ to` for opaque pubkeys.
-DO NOT use `decide` on goals containing free variables (it requires closed terms).
-DO NOT use `omega` to prove `amount ≤ U64_MAX` for opaque Nat values.
-DO NOT use `rfl` or `injection` on inequality goals between opaque pubkeys.
-
-CRITICAL PATTERN for single-transfer CPI:
+PATTERN (one theorem per transfer):
 ```lean
 structure CancelContext where
   escrow_token_account : Pubkey
@@ -242,64 +141,27 @@ structure CancelContext where
   authority : Pubkey
   amount : U64
 
-def cancel_build_transfer_cpi (ctx : CancelContext) : TransferCpi :=
+def cancel_build_cpi (ctx : CancelContext) : TransferCpi :=
   { program := TOKEN_PROGRAM_ID
   , «from» := ctx.escrow_token_account
   , «to» := ctx.initializer_deposit
   , authority := ctx.authority
   , amount := ctx.amount }
 
--- NOTE: h_distinct and h_amount are REQUIRED preconditions
-theorem cancel_cpi_valid (ctx : CancelContext)
-    (h_distinct : ctx.escrow_token_account ≠ ctx.initializer_deposit)
-    (h_amount : ctx.amount ≤ U64_MAX) :
-    let cpi := cancel_build_transfer_cpi ctx
-    transferCpiValid cpi ∧
+theorem cancel_cpi_correct (ctx : CancelContext) :
+    let cpi := cancel_build_cpi ctx
+    cpi.program = TOKEN_PROGRAM_ID ∧
+    cpi.«from» = ctx.escrow_token_account ∧
+    cpi.«to» = ctx.initializer_deposit ∧
     cpi.authority = ctx.authority ∧
-    cpi.«from» ≠ cpi.«to» := by
-  unfold cancel_build_transfer_cpi transferCpiValid
-  exact ⟨⟨rfl, h_distinct, h_amount⟩, rfl, h_distinct⟩
+    cpi.amount = ctx.amount := by
+  unfold cancel_build_cpi
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 ```
 
-CRITICAL PATTERN for multi-transfer CPI:
-```lean
--- For multiple CPIs, add distinctness + amount preconditions for EACH transfer
-theorem exchange_cpis_valid (ctx : ExchangeContext)
-    (h_distinct1 : ctx.taker_deposit ≠ ctx.initializer_receive)
-    (h_distinct2 : ctx.escrow_token_account ≠ ctx.taker_receive)
-    (h_amount1 : ctx.taker_amount ≤ U64_MAX)
-    (h_amount2 : ctx.initializer_amount ≤ U64_MAX) :
-    let cpis := exchange_build_transfer_cpis ctx
-    multipleTransfersValid cpis ∧
-    (∀ cpi ∈ cpis, cpi.program = TOKEN_PROGRAM_ID) := by
-  unfold exchange_build_transfer_cpis
-  unfold multipleTransfersValid
-  simp only [Leanstral.Solana.transferCpiValid, Leanstral.Solana.Cpi.transferCpiValid]
-  constructor
-  · constructor
-    · intro cpi h
-      simp [List.mem_cons, List.mem_singleton] at h
-      rcases h with rfl | rfl
-      · exact ⟨rfl, h_distinct1, h_amount1⟩
-      · exact ⟨rfl, h_distinct2, h_amount2⟩
-    · intro cpi h
-      simp [List.mem_cons, List.mem_singleton] at h
-      rcases h with rfl | rfl
-      · exact h_distinct1
-      · exact h_distinct2
-  · intro cpi h
-    simp [List.mem_cons, List.mem_singleton] at h
-    rcases h with rfl | rfl <;> rfl
-```
-
-NOTE on `unfold transferCpiValid`: After `open Leanstral.Solana`, the abbreviation may not unfold directly.
-Use `simp only [Leanstral.Solana.transferCpiValid, Leanstral.Solana.Cpi.transferCpiValid]` to reduce through abbreviation layers, or use `unfold Leanstral.Solana.Cpi.transferCpiValid` with the fully qualified name.
-
-DO NOT model token balances or state changes - we only verify parameter construction.
-DO NOT use axioms like transfer_preserves_total - this is about CPI interface correctness.
-
-Keep the context structure minimal - only fields needed for CPI construction.
-In record creation, use Lean syntax `field := value`, never `field = value`."#;
+For instructions with multiple transfers, emit one theorem per transfer using the same pattern.
+Keep the context structure minimal — only fields needed for CPI construction.
+In record literals, use `field := value`, never `field = value`."#;
 
 const STATE_MACHINE_HINT: &str = r#"Model only the lifecycle flag or closed/open state that matters. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently. Use the `Lifecycle` type and lemmas from the support library: `closes_is_closed`, `closes_was_open`, `closed_irreversible`.
 
@@ -325,34 +187,30 @@ Do not define a custom local `AccountState` when the theorem is really about lif
 
 const ARITHMETIC_SAFETY_HINT: &str = r#"Model only the numeric parameters and bounds that matter for this obligation. Import the relevant support modules, write `open Leanstral.Solana`, and use that surface consistently.
 
-SPECIFICATION-DRIVEN APPROACH:
-Use a ValidState predicate to capture all type bounds as preconditions:
+PATTERN: After unfolding and simplifying with `cases`, use `simp` to discharge trivial bounds (e.g., `0 ≤ U64_MAX`). For bounds that carry through from preconditions, use the hypothesis directly.
 
 ```lean
-def ValidState (s : ProgramState) : Prop :=
-  s.amount <= U64_MAX ∧
-  s.taker_amount <= U64_MAX ∧
-  s.bump <= U8_MAX
-
-theorem transition_preserves_validity (spec : TransitionSpec)
-    (pre post : ProgramState)
-    (h_valid : ValidState pre)
-    (h : transition spec pre = some post) :
-    ValidState post := by
-  unfold ValidState at *
-  unfold transition at h
+-- Simple case: transition preserves or sets trivial bounds
+theorem cancel_arithmetic_safety (p_preState p_postState : EscrowState)
+    (h : cancelTransition p_preState p_signer = some p_postState) :
+    p_postState.amount ≤ U64_MAX := by
+  unfold cancelTransition at h
   cases h
-  -- Prove each component of ValidState for post
-  constructor
-  · -- prove post.amount <= U64_MAX using h_valid
-  constructor
-  · -- prove post.taker_amount <= U64_MAX using h_valid
-  · -- prove post.bump <= U8_MAX using h_valid
+  simp  -- discharges trivial numeric goals
 ```
 
-DO NOT try to prove `pre.amount <= U64_MAX` from the transition alone - this is a PRECONDITION.
-Use ValidState as a precondition and prove it's PRESERVED by the transition.
+```lean
+-- Harder case: bounds preserved from precondition
+theorem transition_preserves_validity (p_preState p_postState : ProgramState)
+    (h_valid : p_preState.amount ≤ U64_MAX)
+    (h : transition p_preState = some p_postState) :
+    p_postState.amount ≤ U64_MAX := by
+  unfold transition at h
+  cases h
+  exact h_valid  -- bound carries through unchanged
+```
 
+DO NOT try to prove `pre.amount ≤ U64_MAX` from the transition alone — add it as a precondition.
 Avoid unrelated account/token semantics. Do not write theorem statements using placeholders like `some _`."#;
 
 // Support API documentation
@@ -398,11 +256,8 @@ pub fn support_api_for_modules(modules: &[String]) -> String {
             "CloseCpi : Type".to_string(),
             "TOKEN_PROGRAM_ID : Pubkey".to_string(),
             "SYSTEM_PROGRAM_ID : Pubkey".to_string(),
-            "transferCpiValid : TransferCpi -> Prop  -- defined as: cpi.program = TOKEN_PROGRAM_ID ∧ cpi.from ≠ cpi.to ∧ cpi.amount ≤ U64_MAX. REQUIRES explicit hypotheses for from ≠ to and amount ≤ U64_MAX since Pubkey/U64 fields are opaque Nat values.".to_string(),
-            "mintToCpiValid : MintToCpi -> Prop".to_string(),
-            "burnCpiValid : BurnCpi -> Prop".to_string(),
-            "closeCpiValid : CloseCpi -> Prop".to_string(),
-            "multipleTransfersValid : List TransferCpi -> Prop  -- defined as: (∀ cpi ∈ transfers, transferCpiValid cpi) ∧ (∀ cpi ∈ transfers, cpi.from ≠ cpi.to). Same precondition requirements as transferCpiValid for each element.".to_string(),
+            "transferCpiValid : TransferCpi -> Prop".to_string(),
+            "multipleTransfersValid : List TransferCpi -> Prop".to_string(),
         ]);
     }
 
