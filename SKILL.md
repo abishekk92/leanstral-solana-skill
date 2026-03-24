@@ -64,8 +64,8 @@ Present the best completion. If `--validate` was used, the tool already selected
 Evidence precedence: IDL (structure) > Rust source (semantics) > tests (hints).
 
 Property categories, in priority order:
-1. **Access control** — signer checks, `has_one`, authority constraints
-2. **Conservation** — token totals preserved across transfers
+1. **Access control** — signer checks, authority constraints
+2. **CPI correctness** — correct parameters passed to each transfer (axiomatic, pure `rfl`)
 3. **State machines** — lifecycle correctness, one-shot safety
 4. **Arithmetic safety** — overflow/underflow for fixed-width integers
 

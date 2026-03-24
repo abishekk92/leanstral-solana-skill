@@ -25,13 +25,10 @@ export MISTRAL_API_KEY=your_key_here
 ```bash
 leanstral verify \
   --idl target/idl/my_program.json \
-  --input programs/my_program/src/lib.rs \
-  --tests tests/my_program.ts \
-  --output-dir /tmp/proofs \
-  --top-k 3 \
-  --validate \
-  --repair-rounds 1
+  --validate
 ```
+
+The IDL is the primary input. Optional flags: `--input` (Rust source, passed to the LLM as context but not parsed) and `--tests` (test files, used as hint signals for property ranking).
 
 This analyzes the program, ranks candidate properties, generates proofs via pass@N sampling, validates them with `lake build`, and retries on compiler errors.
 
@@ -39,10 +36,7 @@ This analyzes the program, ranks candidate properties, generates proofs via pass
 
 ```bash
 leanstral analyze \
-  --idl target/idl/my_program.json \
-  --input programs/my_program/src/lib.rs \
-  --tests tests/my_program.ts \
-  --output-dir /tmp/analysis
+  --idl target/idl/my_program.json
 ```
 
 Emits `analysis.json` with ranked property candidates and one prompt file per property.
@@ -64,14 +58,24 @@ cd /tmp/proofs/<property_id>
 lake build  # Success = formally verified
 ```
 
+### Consolidate proofs
+
+```bash
+leanstral consolidate \
+  --input-dir /tmp/proofs \
+  --output-dir my_program/formal_verification
+```
+
+Merges validated `Best.lean` files into a single Lean project with namespaced proofs.
+
 ## What It Verifies
 
-- **Access control** — signer checks, `has_one`, authority constraints
-- **Conservation** — token totals preserved across transfers
+- **Access control** — signer checks, authority constraints
+- **CPI correctness** — correct parameters passed to each transfer (axiomatic, pure `rfl`)
 - **State machines** — lifecycle correctness, one-shot safety
 - **Arithmetic safety** — overflow/underflow for fixed-width integers
 
-CPI parameters are verified for correct construction (program ID, distinct accounts, bounded amounts). SPL Token internals and Solana runtime are trusted axioms.
+CPI calls are treated as axiomatic (external to business logic). We verify the program passes correct parameters — SPL Token internals and Solana runtime are trusted.
 
 ## Requirements
 
