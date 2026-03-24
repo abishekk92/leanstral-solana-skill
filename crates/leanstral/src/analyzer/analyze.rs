@@ -1,4 +1,4 @@
-use crate::ir::{AnalysisIr, InstructionIr, PropertyCandidateIr, TestSignalIr};
+use super::ir::{AnalysisIr, InstructionIr, PropertyCandidateIr, TestSignalIr};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::BTreeSet;

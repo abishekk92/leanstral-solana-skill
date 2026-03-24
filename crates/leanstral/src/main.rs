@@ -1,3 +1,4 @@
+mod analyzer;
 mod api;
 mod consolidate;
 mod ir;
@@ -152,7 +153,7 @@ async fn main() -> Result<()> {
             if idl.is_none() && input.is_none() {
                 anyhow::bail!("At least one of --idl or --input must be provided");
             }
-            anchor_ir::analyze_project(
+            analyzer::analyze_project(
                 idl.as_deref(),
                 input.as_deref(),
                 &tests,

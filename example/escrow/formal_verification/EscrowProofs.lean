@@ -1,10 +1,10 @@
-import Mathlib.Tactic
+import Leanstral.Solana
 import Leanstral.Solana.Account
 import Leanstral.Solana.Authority
 import Leanstral.Solana.Cpi
 import Leanstral.Solana.State
-import Leanstral.Solana.Token
-import Leanstral.Solana.Valid
+import Mathlib
+import Mathlib.Tactic
 
 open Leanstral.Solana
 
@@ -23,7 +23,7 @@ structure EscrowState where
   bump : U8
 
 def cancelTransition (p_preState : EscrowState) (p_signer : Pubkey) : Option Unit :=
-  if p_signer = p_preState.initializer then
+  if h : p_signer = p_preState.initializer then
     some ()
   else
     none
@@ -46,26 +46,26 @@ namespace CancelCpiCorrectness
 
 structure CancelContext where
   escrow_token_account : Pubkey
-  initializer_deposit : Pubkey
+  initializer_deposit_token_account : Pubkey
   authority : Pubkey
   amount : U64
 
-def cancel_build_cpi (ctx : CancelContext) : TransferCpi :=
+def cancel_build_transfer_cpi (p_ctx : CancelContext) : TransferCpi :=
   { program := TOKEN_PROGRAM_ID
-  , «from» := ctx.escrow_token_account
-  , «to» := ctx.initializer_deposit
-  , authority := ctx.authority
-  , amount := ctx.amount }
+  , «from» := p_ctx.escrow_token_account
+  , «to» := p_ctx.initializer_deposit_token_account
+  , authority := p_ctx.authority
+  , amount := p_ctx.amount }
 
-theorem cancel_cpi_correct (ctx : CancelContext) :
-    let cpi := cancel_build_cpi ctx
-    cpi.program = TOKEN_PROGRAM_ID ∧
-    cpi.«from» = ctx.escrow_token_account ∧
-    cpi.«to» = ctx.initializer_deposit ∧
-    cpi.authority = ctx.authority ∧
-    cpi.amount = ctx.amount := by
-  unfold cancel_build_cpi
-  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+theorem cancel_cpi_valid (p_ctx : CancelContext)
+    (p_distinct : p_ctx.escrow_token_account ≠ p_ctx.initializer_deposit_token_account)
+    (p_amount : p_ctx.amount ≤ U64_MAX) :
+    let cpi := cancel_build_transfer_cpi p_ctx
+    transferCpiValid cpi ∧
+    cpi.authority = p_ctx.authority ∧
+    cpi.«from» ≠ cpi.«to» := by
+  unfold cancel_build_transfer_cpi transferCpiValid
+  exact ⟨⟨rfl, p_distinct, p_amount⟩, rfl, p_distinct⟩
 
 end CancelCpiCorrectness
 
@@ -84,8 +84,8 @@ structure EscrowState where
   escrow_token_account : Pubkey
   bump : U8
 
-def cancelTransition (p_preState : EscrowState) : Option EscrowState :=
-  some { p_preState with lifecycle := Lifecycle.closed }
+def cancelTransition (p_s : EscrowState) : Option EscrowState :=
+  some { p_s with lifecycle := Lifecycle.closed }
 
 theorem cancel_closes_escrow (p_preState p_postState : EscrowState)
     (h : cancelTransition p_preState = some p_postState) :
@@ -133,48 +133,52 @@ end ExchangeAccessControl
 namespace ExchangeCpiCorrectness
 
 structure ExchangeContext where
-  taker : Pubkey
-  escrow : Pubkey
-  taker_deposit : Pubkey
-  initializer_receive : Pubkey
+  taker_deposit_token_account : Pubkey
+  initializer_receive_token_account : Pubkey
   escrow_token_account : Pubkey
-  taker_receive : Pubkey
-  taker_amount : U64
-  initializer_amount : U64
+  taker_receive_token_account : Pubkey
+  amount1 : U64
+  amount2 : U64
 
-def exchange_build_cpi_1 (ctx : ExchangeContext) : TransferCpi :=
-  { program := TOKEN_PROGRAM_ID
-  , «from» := ctx.taker_deposit
-  , «to» := ctx.initializer_receive
-  , authority := ctx.taker
-  , amount := ctx.taker_amount }
+-- Build transfer CPIs for exchange instruction
+def exchange_build_transfer_cpis (p_ctx : ExchangeContext) : List TransferCpi :=
+  [ { program := TOKEN_PROGRAM_ID
+    , «from» := p_ctx.taker_deposit_token_account
+    , «to» := p_ctx.initializer_receive_token_account
+    , authority := p_ctx.taker_deposit_token_account
+    , amount := p_ctx.amount1 }
+  , { program := TOKEN_PROGRAM_ID
+    , «from» := p_ctx.escrow_token_account
+    , «to» := p_ctx.taker_receive_token_account
+    , authority := p_ctx.escrow_token_account
+    , amount := p_ctx.amount2 } ]
 
-def exchange_build_cpi_2 (ctx : ExchangeContext) : TransferCpi :=
-  { program := TOKEN_PROGRAM_ID
-  , «from» := ctx.escrow_token_account
-  , «to» := ctx.taker_receive
-  , authority := ctx.escrow
-  , amount := ctx.initializer_amount }
-
-theorem exchange_cpi_1_correct (ctx : ExchangeContext) :
-    let cpi := exchange_build_cpi_1 ctx
-    cpi.program = TOKEN_PROGRAM_ID ∧
-    cpi.«from» = ctx.taker_deposit ∧
-    cpi.«to» = ctx.initializer_receive ∧
-    cpi.authority = ctx.taker ∧
-    cpi.amount = ctx.taker_amount := by
-  unfold exchange_build_cpi_1
-  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
-
-theorem exchange_cpi_2_correct (ctx : ExchangeContext) :
-    let cpi := exchange_build_cpi_2 ctx
-    cpi.program = TOKEN_PROGRAM_ID ∧
-    cpi.«from» = ctx.escrow_token_account ∧
-    cpi.«to» = ctx.taker_receive ∧
-    cpi.authority = ctx.escrow ∧
-    cpi.amount = ctx.initializer_amount := by
-  unfold exchange_build_cpi_2
-  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+theorem exchange_cpis_valid (p_ctx : ExchangeContext)
+    (p_distinct1 : p_ctx.taker_deposit_token_account ≠ p_ctx.initializer_receive_token_account)
+    (p_distinct2 : p_ctx.escrow_token_account ≠ p_ctx.taker_receive_token_account)
+    (p_amount1 : p_ctx.amount1 ≤ U64_MAX)
+    (p_amount2 : p_ctx.amount2 ≤ U64_MAX) :
+    let cpis := exchange_build_transfer_cpis p_ctx
+    multipleTransfersValid cpis ∧
+    (∀ cpi ∈ cpis, cpi.program = TOKEN_PROGRAM_ID) := by
+  unfold exchange_build_transfer_cpis
+  unfold multipleTransfersValid
+  simp only [Leanstral.Solana.transferCpiValid, Leanstral.Solana.Cpi.transferCpiValid]
+  constructor
+  · constructor
+    · intro cpi h
+      simp [List.mem_cons, List.mem_singleton] at h
+      rcases h with rfl | rfl
+      · exact ⟨rfl, p_distinct1, p_amount1⟩
+      · exact ⟨rfl, p_distinct2, p_amount2⟩
+    · intro cpi h
+      simp [List.mem_cons, List.mem_singleton] at h
+      rcases h with rfl | rfl
+      · exact p_distinct1
+      · exact p_distinct2
+  · intro cpi h
+    simp [List.mem_cons, List.mem_singleton] at h
+    rcases h with rfl | rfl <;> rfl
 
 end ExchangeCpiCorrectness
 
@@ -242,57 +246,27 @@ end InitializeAccessControl
 namespace InitializeCpiCorrectness
 
 structure InitializeContext where
-  initializer : Pubkey
   initializer_deposit_token_account : Pubkey
   escrow_token_account : Pubkey
+  authority : Pubkey
   amount : U64
 
-def initialize_build_cpi (ctx : InitializeContext) : TransferCpi :=
+def initialize_build_transfer_cpi (p_ctx : InitializeContext) : TransferCpi :=
   { program := TOKEN_PROGRAM_ID
-  , «from» := ctx.initializer_deposit_token_account
-  , «to» := ctx.escrow_token_account
-  , authority := ctx.initializer
-  , amount := ctx.amount }
+  , «from» := p_ctx.initializer_deposit_token_account
+  , «to» := p_ctx.escrow_token_account
+  , authority := p_ctx.authority
+  , amount := p_ctx.amount }
 
-theorem initialize_cpi_correct (ctx : InitializeContext) :
-    let cpi := initialize_build_cpi ctx
-    cpi.program = TOKEN_PROGRAM_ID ∧
-    cpi.«from» = ctx.initializer_deposit_token_account ∧
-    cpi.«to» = ctx.escrow_token_account ∧
-    cpi.authority = ctx.initializer ∧
-    cpi.amount = ctx.amount := by
-  unfold initialize_build_cpi
-  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+theorem initialize_cpi_valid (p_ctx : InitializeContext)
+    (p_distinct : p_ctx.initializer_deposit_token_account ≠ p_ctx.escrow_token_account)
+    (p_amount : p_ctx.amount ≤ U64_MAX) :
+    let cpi := initialize_build_transfer_cpi p_ctx
+    transferCpiValid cpi ∧
+    cpi.authority = p_ctx.authority ∧
+    cpi.«from» ≠ cpi.«to» := by
+  unfold initialize_build_transfer_cpi transferCpiValid
+  exact ⟨⟨rfl, p_distinct, p_amount⟩, rfl, p_distinct⟩
 
 end InitializeCpiCorrectness
-
-/- ============================================================================
-   ProgramArithmeticSafety Proof
-   ============================================================================ -/
-
-namespace ProgramArithmeticSafety
-
-def U64_MAX : Nat := 18446744073709551615
-
-structure ProgramState where
-  amount : Nat
-  taker_amount : Nat
-  bump : Nat
-
-def ValidState (s : ProgramState) : Prop :=
-  s.amount <= U64_MAX ∧
-  s.taker_amount <= U64_MAX ∧
-  s.bump <= 255
-
-def cancelTransition (p_s : ProgramState) : Option ProgramState :=
-  some { p_s with amount := 0 }
-
-theorem cancel_arithmetic_safety  (p_preState p_postState : ProgramState)
-    (h : cancelTransition p_preState  = some p_postState) :
-    p_postState.amount <= U64_MAX := by
-  unfold cancelTransition at h
-  cases h
-  simp
-
-end ProgramArithmeticSafety
 

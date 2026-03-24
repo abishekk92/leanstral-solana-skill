@@ -72,13 +72,8 @@ lake build                # Verify all proofs compile
 
 ### Crate Structure
 
-**`anchor-ir/`** - Analyzer for Solana/Anchor programs
-- Parses IDL JSON (instructions, accounts, constraints)
-- Extracts Rust source semantics (transfers, CPIs, closes)
-- Parses test files for property hints
-- Outputs: `AnalysisIr` with ranked property candidates
-
-**`leanstral/`** - Main CLI and proof generation
+**`leanstral/`** - Single crate: CLI, analyzer, and proof generation
+- `analyzer/` - IDL parsing, test signal extraction, property candidate generation
 - `main.rs` - CLI entry points (analyze, generate, verify, consolidate)
 - `workflow.rs` - Full pipeline orchestration, candidate selection, repair loop
 - `prompt/templates.rs` - Prompt templates with Lean tactics guidance
@@ -97,8 +92,8 @@ lake build                # Verify all proofs compile
 
 ### Data Flow
 
-1. **Analysis Phase** (`anchor-ir`)
-   - Input: IDL JSON, Rust source, test files
+1. **Analysis Phase** (`analyzer/`)
+   - Input: IDL JSON, test files
    - Output: `analysis.json` with `PropertyCandidateIr[]`
    - Emits: One `.prompt.txt` per property candidate
 

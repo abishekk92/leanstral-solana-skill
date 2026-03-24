@@ -3,7 +3,7 @@
 // Builds Lean-specific proof plans from language-agnostic Anchor analysis IR.
 
 use crate::ir::*;
-use anchor_ir::{InstructionIr, PropertyCandidateIr};
+use crate::analyzer::{InstructionIr, PropertyCandidateIr};
 
 /// Build a proof plan from property candidates
 pub fn build_proof_plan(

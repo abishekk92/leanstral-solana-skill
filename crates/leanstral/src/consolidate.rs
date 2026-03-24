@@ -94,12 +94,11 @@ fn to_namespace(dir_name: &str) -> String {
         .collect()
 }
 
-/// Read a proof file and wrap it in a namespace
-fn process_proof_file(proof_file: &Path) -> Result<(String, String)> {
+/// Read a proof file, extract its imports, and wrap the body in a namespace
+fn process_proof_file(proof_file: &Path) -> Result<(String, Vec<String>, String)> {
     let content = fs::read_to_string(proof_file)
         .with_context(|| format!("Failed to read {}", proof_file.display()))?;
 
-    // Get the parent directory name for the namespace
     let parent = proof_file
         .parent()
         .and_then(|p| p.file_name())
@@ -108,21 +107,22 @@ fn process_proof_file(proof_file: &Path) -> Result<(String, String)> {
 
     let namespace = to_namespace(parent);
 
-    // Strip imports from the content since we'll have them at the top level
+    // Collect imports and find where the body starts
     let lines: Vec<&str> = content.lines().collect();
+    let mut imports = Vec::new();
     let mut content_start = 0;
 
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        if !trimmed.is_empty()
-            && !trimmed.starts_with("import ")
-            && !trimmed.starts_with("open ") {
+        if trimmed.starts_with("import ") {
+            imports.push(trimmed.to_string());
+        } else if !trimmed.is_empty() && !trimmed.starts_with("open ") && !trimmed.starts_with("--") {
             content_start = i;
             break;
         }
     }
 
-    // Skip "open" statements too
+    // Skip any remaining open/empty lines
     while content_start < lines.len() {
         let trimmed = lines[content_start].trim();
         if !trimmed.is_empty() && !trimmed.starts_with("open ") {
@@ -133,7 +133,7 @@ fn process_proof_file(proof_file: &Path) -> Result<(String, String)> {
 
     let proof_content = lines[content_start..].join("\n");
 
-    Ok((namespace, proof_content))
+    Ok((namespace, imports, proof_content))
 }
 
 /// Consolidate multiple Lean proof projects into a single project
@@ -145,20 +145,28 @@ pub fn consolidate_proofs(input_dir: &Path, output_dir: &Path) -> Result<()> {
     let proof_files = find_proof_files(input_dir)?;
     println!("Found {} proof files to consolidate", proof_files.len());
 
+    // Process all proof files and collect their imports
+    let mut all_imports = std::collections::BTreeSet::new();
+    let mut proofs = Vec::new();
+
+    for proof_file in &proof_files {
+        let (namespace, imports, content) = process_proof_file(proof_file)?;
+        all_imports.extend(imports);
+        proofs.push((namespace, content));
+    }
+
     // Build the consolidated proof file
     let mut consolidated = String::new();
 
-    // Add imports at the top
-    consolidated.push_str("import Mathlib.Tactic\n");
-    consolidated.push_str("import Leanstral.Solana.Account\n");
-    consolidated.push_str("import Leanstral.Solana.Authority\n");
-    consolidated.push_str("import Leanstral.Solana.State\n");
-    consolidated.push_str("import Leanstral.Solana.Token\n\n");
-    consolidated.push_str("open Leanstral.Solana\n\n");
+    // Add union of all imports
+    for import in &all_imports {
+        consolidated.push_str(import);
+        consolidated.push('\n');
+    }
+    consolidated.push_str("\nopen Leanstral.Solana\n\n");
 
-    // Process each proof file
-    for proof_file in &proof_files {
-        let (namespace, content) = process_proof_file(proof_file)?;
+    // Write each proof in its namespace
+    for (namespace, content) in &proofs {
 
         consolidated.push_str(&format!(
             "/- {separator}\n   {title}\n   {separator} -/\n\n",

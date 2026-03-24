@@ -12,7 +12,6 @@ name = "leanstral"
 path = "src/main.rs"
 
 [dependencies]
-anchor-ir = { path = "../anchor-ir" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 reqwest = { workspace = true }

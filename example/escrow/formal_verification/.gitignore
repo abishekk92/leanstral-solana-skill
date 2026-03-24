@@ -1,7 +1,7 @@
-.lake/
-lake-manifest.json
+/.lake
+/lake-manifest.json
+/lakefile.olean
+/lakefile.olean.trace
 *.olean
-*.ilean
-*.c
 *.trace
-build/
+.lake

@@ -12,15 +12,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "anchor-ir"
-version = "0.1.0"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "anstream"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,7 +652,6 @@ dependencies = [
 name = "leanstral-solana-skill"
 version = "1.0.0"
 dependencies = [
- "anchor-ir",
  "anyhow",
  "clap",
  "regex",

@@ -2,7 +2,7 @@ use crate::api::{generate_proofs, BuildStatus, LeanstralMetadata};
 use crate::proof_plan;
 use crate::prompt::PromptBuilder;
 use crate::validate::build_repair_prompt;
-use anchor_ir::{PropertyCandidateIr, AnalysisIr};
+use crate::analyzer::{PropertyCandidateIr, AnalysisIr};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -219,7 +219,7 @@ pub async fn run_full_pipeline(
 
     // Run analyzer
     eprintln!("Analyzing Solana project...");
-    anchor_ir::analyze_project(
+    crate::analyzer::analyze_project(
         idl.as_deref(),
         input.as_deref(),
         &tests,
