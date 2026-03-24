@@ -59,33 +59,50 @@ Ask questions **one at a time**. Wait for the user's answer before presenting th
 
 ### Step 3: Write SPEC.md
 
-Based on the conversation, create a `SPEC.md` in the project's `formal_verification/` directory. This is the contract between user intent and what gets verified.
+Based on the conversation, create a `SPEC.md` in the project's `formal_verification/` directory. This is the contract between user intent and what gets verified. Use normative language (MUST, MUST NOT, MAY) throughout.
+
+See `example/escrow/formal_verification/SPEC.md` for a complete example.
 
 Structure:
 
 ```markdown
-# Verification Specification
+# <Program Name> Verification Spec v1.0
 
-## Program Summary
 <1-2 sentences describing what the program does, in the user's language>
 
-## Properties to Verify
+## 0. Security Goals
 
-### <Property name in plain language>
-- **Category**: access_control | cpi_correctness | state_machine | arithmetic_safety
-- **What it means**: <plain language description>
-- **Why it matters**: <what could go wrong without this>
-- **Instructions involved**: <which IDL instructions implement this>
+The program MUST provide the following properties:
+1. **<Goal name>**: <normative statement using MUST/MUST NOT/MAY>
+2. ...
 
-### ...
+## 1. State Model
 
-## Out of Scope
-<What we trust / don't verify and why>
+<State struct with field names, types, and comments>
+<PDA derivation>
+<Lifecycle diagram if applicable>
 
-## Trust Boundary
-- SPL Token program (axiomatic)
-- Solana runtime (PDA derivation, account ownership)
-- Anchor framework (constraint enforcement)
+## 2. Operations
+
+### 2.1 <Operation name>
+**Signers**: <who MUST sign>
+**Preconditions**: <what MUST be true before>
+**Effects**: <numbered steps with normative transfer descriptions>
+**Postconditions**: <what MUST be true after>
+
+## 3. Formal Properties
+
+### 3.1 <Category>
+**<property_id>**: For all <quantified variables>,
+if <transition predicate> then <conclusion>.
+
+## 4. Trust Boundary
+<What is axiomatic and why>
+
+## 5. Verification Results
+| Property | Status | Proof |
+|---|---|---|
+| ... | **Verified** / **Open** | namespace.theorem_name |
 ```
 
 Present SPEC.md to the user and get confirmation before proceeding. This is the most important step — wrong scope means wasted proofs.
