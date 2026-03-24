@@ -5,6 +5,7 @@ mod ir;
 mod project;
 mod prompt;
 mod proof_plan;
+mod spec;
 mod validate;
 mod workflow;
 
@@ -120,6 +121,17 @@ enum Commands {
         analysis_only: bool,
     },
 
+    /// Generate a draft SPEC.md from an Anchor IDL
+    Spec {
+        /// Path to Anchor IDL JSON file
+        #[arg(long)]
+        idl: PathBuf,
+
+        /// Directory to write SPEC.md (default: ./formal_verification)
+        #[arg(long, default_value = "./formal_verification")]
+        output_dir: PathBuf,
+    },
+
     /// Consolidate multiple proof projects into a single Lean project
     Consolidate {
         /// Directory containing proof subdirectories (each with Best.lean)
@@ -215,6 +227,13 @@ async fn main() -> Result<()> {
                 analysis_only,
             )
             .await?;
+        }
+
+        Commands::Spec {
+            idl,
+            output_dir,
+        } => {
+            spec::generate_spec(&idl, &output_dir)?;
         }
 
         Commands::Consolidate {

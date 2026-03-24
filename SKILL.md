@@ -14,11 +14,13 @@ This skill calls Mistral's **Leanstral** model (`labs-leanstral-2603`) to genera
 
 ## Workflow
 
-### Step 1: Understand the program
+### Step 1: Determine what's available
 
-Find and read the Anchor IDL JSON (typical location: `target/idl/<program_name>.json`). If it doesn't exist, tell the user to run `anchor build` first.
+Check for existing artifacts in this priority order:
 
-Read the IDL to understand the program's structure: instructions, accounts, arguments, and their types. Map these to user-facing functionality — don't present raw instruction names.
+1. **SPEC.md exists** (in `formal_verification/` or project root) → Read it. The spec is the source of truth — skip scoping questions and go to Step 4. Ask only if something in the spec is unclear or contradicts the IDL.
+2. **IDL exists** (`target/idl/<program>.json`) → Run `leanstral spec --idl <path>` to generate a draft SPEC.md, then refine interactively in Step 2.
+3. **Neither exists** → If this is an Anchor project, tell the user to run `anchor build` to generate the IDL. If not an Anchor project, read the source code directly and ask broader scoping questions.
 
 ### Step 2: Build the verification scope interactively
 
@@ -59,7 +61,7 @@ Ask questions **one at a time**. Wait for the user's answer before presenting th
 
 ### Step 3: Write SPEC.md
 
-Based on the conversation, create a `SPEC.md` in the project's `formal_verification/` directory. This is the contract between user intent and what gets verified. Use normative language (MUST, MUST NOT, MAY) throughout.
+Based on the conversation, finalize SPEC.md in the project's `formal_verification/` directory. If you ran `leanstral spec` in Step 1, you already have a draft — resolve the `<!-- TODO -->` markers using the user's answers. Otherwise, create SPEC.md from scratch. Use normative language (MUST, MUST NOT, MAY) throughout.
 
 See `example/escrow/formal_verification/SPEC.md` for a complete example.
 
