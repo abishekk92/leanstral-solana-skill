@@ -80,9 +80,9 @@ fn support_modules_for_category(category: &str) -> Vec<String> {
 
 fn theorem_shape_for_category(category: &str) -> &'static str {
     match category {
-        "access_control" => "transition_non_none_implies_signer_equals_initializer",
+        "access_control" => "transition_non_none_implies_signer_equals_authority",
         "cpi_correctness" => "cpi_parameters_are_valid",
-        "state_machine" => "cancel_transition_sets_lifecycle_closed",
+        "state_machine" => "transition_sets_lifecycle_closed",
         "arithmetic_safety" => "transition_preserves_numeric_bounds",
         _ => "custom",
     }
@@ -98,20 +98,25 @@ fn generate_theorem_skeleton(
         .first()
         .unwrap_or(&default_name);
 
+    // Find the instruction to derive signer names
+    let ix_ir = instructions.iter().find(|ix| ix.name == *ix_name);
+    let first_signer = ix_ir
+        .and_then(|ix| ix.signers.first())
+        .map(|s| s.as_str())
+        .unwrap_or("authority");
+
     match candidate.category.as_str() {
         "access_control" => {
             format!(
-                r#"theorem {ix}_access_control (p_preState : EscrowState) (p_signer : Pubkey)
+                r#"theorem {ix}_access_control (p_preState : ProgramState) (p_signer : Pubkey)
     (h : {ix}Transition p_preState p_signer ≠ none) :
-    p_signer = p_preState.initializer := by
+    p_signer = p_preState.{signer} := by
   sorry"#,
-                ix = ix_name
+                ix = ix_name,
+                signer = first_signer
             )
         }
         "cpi_correctness" => {
-            // CPI proofs are pure parameter mapping (all rfl).
-            // Without source-level transfer info (pushed to coding agent),
-            // emit a generic skeleton the LLM will adapt.
             format!(
                 r#"theorem {ix}_cpi_correct (ctx : {ix}Context) :
     let cpi := {ix}_build_cpi ctx
@@ -127,7 +132,7 @@ fn generate_theorem_skeleton(
         }
         "state_machine" => {
             format!(
-                r#"theorem {ix}_closes_escrow (p_preState p_postState : EscrowState)
+                r#"theorem {ix}_closes_account (p_preState p_postState : ProgramState)
     (h : {ix}Transition p_preState = some p_postState) :
     p_postState.lifecycle = Lifecycle.closed := by
   sorry"#,
@@ -135,13 +140,14 @@ fn generate_theorem_skeleton(
             )
         }
         "arithmetic_safety" => {
-            let args = instructions
-                .iter()
-                .find(|ix| ix.name == *ix_name)
+            let args = ix_ir
                 .map(|ix| {
                     ix.args
                         .iter()
-                        .filter(|arg| arg.contains("u64") || arg.contains("u8"))
+                        .filter(|arg| {
+                            arg.contains("u8") || arg.contains("u16") || arg.contains("u32")
+                                || arg.contains("u64") || arg.contains("u128")
+                        })
                         .map(|arg| {
                             let parts: Vec<&str> = arg.split(':').collect();
                             format!("p_{}", parts[0].trim())

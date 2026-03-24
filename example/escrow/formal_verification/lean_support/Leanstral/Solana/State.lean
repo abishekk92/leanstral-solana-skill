@@ -56,6 +56,7 @@ abbrev lifecycle_eq_or_ne := Leanstral.Solana.State.lifecycle_eq_or_ne
 
 namespace Lifecycle
 
+abbrev «open» : Leanstral.Solana.Lifecycle := Leanstral.Solana.State.Lifecycle.open
 abbrev closed : Leanstral.Solana.Lifecycle := Leanstral.Solana.State.Lifecycle.closed
 
 end Lifecycle

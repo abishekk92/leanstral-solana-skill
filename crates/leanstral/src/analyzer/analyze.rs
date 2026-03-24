@@ -12,15 +12,37 @@ pub fn analyze_project(
     output_dir: Option<&Path>,
 ) -> Result<String, String> {
     let mut instructions = Vec::new();
+    let mut has_token_program: BTreeSet<String> = BTreeSet::new();
+    let mut has_close_semantics: BTreeSet<String> = BTreeSet::new();
 
     if let Some(idl_path) = idl_path {
         let idl_source = fs::read_to_string(idl_path).map_err(|e| e.to_string())?;
         let idl: AnchorIdl = serde_json::from_str(&idl_source).map_err(|e| e.to_string())?;
         instructions = parse_idl_instructions(&idl);
+
+        // Detect which instructions have token programs and close semantics
+        for ix in &idl.instructions {
+            let ix_has_token = ix.accounts.iter().any(|a| a.name.contains("token_program"));
+            let ix_has_writable_pda = ix.accounts.iter().any(|a| a.writable && a.pda.is_some());
+            let ix_has_relations = ix.accounts.iter().any(|a| !a.relations.is_empty());
+            let ix_is_init = ix.name.contains("init");
+
+            if ix_has_token {
+                has_token_program.insert(ix.name.clone());
+            }
+            if ix_has_writable_pda && !ix_is_init && (ix_has_relations || ix.args.is_empty()) {
+                has_close_semantics.insert(ix.name.clone());
+            }
+        }
     }
 
     let test_signals = parse_tests(tests)?;
-    let property_candidates = derive_property_candidates(&instructions, &test_signals);
+    let property_candidates = derive_property_candidates(
+        &instructions,
+        &test_signals,
+        &has_token_program,
+        &has_close_semantics,
+    );
 
     let ir = AnalysisIr {
         source_file: _input
@@ -76,7 +98,11 @@ struct IdlInstructionAccount {
     #[serde(default)]
     signer: bool,
     #[serde(default)]
+    writable: bool,
+    #[serde(default)]
     pda: Option<IdlPda>,
+    #[serde(default)]
+    relations: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +219,8 @@ fn infer_properties_from_text(text: &str) -> Vec<String> {
 fn derive_property_candidates(
     instructions: &[InstructionIr],
     test_signals: &[TestSignalIr],
+    has_token_program: &BTreeSet<String>,
+    has_close_semantics: &BTreeSet<String>,
 ) -> Vec<PropertyCandidateIr> {
     let mut candidates = Vec::new();
     let test_props: BTreeSet<String> = test_signals
@@ -201,7 +229,7 @@ fn derive_property_candidates(
         .collect();
 
     for instruction in instructions {
-        // Access control: any instruction with signers
+        // Access control: instructions with signers
         if !instruction.signers.is_empty() || test_props.contains("access_control") {
             candidates.push(PropertyCandidateIr {
                 id: format!("{}_access_control", instruction.name),
@@ -221,26 +249,28 @@ fn derive_property_candidates(
             });
         }
 
-        // CPI correctness: any instruction (agent will identify transfers from source)
-        candidates.push(PropertyCandidateIr {
-            id: format!("{}_cpi_correctness", instruction.name),
-            category: "cpi_correctness".into(),
-            title: format!("{}: CPI parameter correctness", instruction.name),
-            confidence: "medium".into(),
-            relevant_instructions: vec![instruction.name.clone()],
-            evidence: vec![],
-            prompt_hint: format!(
-                "CPI calls are axiomatic (external to business logic). Verify that {} passes the correct parameters to each transfer CPI. Proof should be purely definitional (all rfl).",
-                instruction.name
-            ),
-        });
+        // CPI correctness: only instructions that actually have token_program
+        if has_token_program.contains(&instruction.name) || test_props.contains("cpi_correctness") {
+            candidates.push(PropertyCandidateIr {
+                id: format!("{}_cpi_correctness", instruction.name),
+                category: "cpi_correctness".into(),
+                title: format!("{}: CPI parameter correctness", instruction.name),
+                confidence: "medium".into(),
+                relevant_instructions: vec![instruction.name.clone()],
+                evidence: vec![],
+                prompt_hint: format!(
+                    "CPI calls are axiomatic. Verify that {} passes the correct parameters to each transfer CPI. Proof should be purely definitional (all rfl).",
+                    instruction.name
+                ),
+            });
+        }
 
-        // State machine: instructions with PDA seeds suggest state accounts
-        if !instruction.pda_seeds.is_empty() || test_props.contains("state_machine") {
+        // State machine: only terminal operations (close semantics), not init
+        if has_close_semantics.contains(&instruction.name) || test_props.contains("state_machine") {
             candidates.push(PropertyCandidateIr {
                 id: format!("{}_state_machine", instruction.name),
                 category: "state_machine".into(),
-                title: format!("{}: state machine safety", instruction.name),
+                title: format!("{}: close / one-shot safety", instruction.name),
                 confidence: "medium".into(),
                 relevant_instructions: vec![instruction.name.clone()],
                 evidence: instruction
@@ -249,39 +279,35 @@ fn derive_property_candidates(
                     .map(|s| format!("pda_seed: {}", s))
                     .collect(),
                 prompt_hint: format!(
-                    "Model the lifecycle flag for the state account. Prove {} moves it to the correct state.",
+                    "Model the lifecycle flag for the state account. Prove {} closes the account.",
                     instruction.name
                 ),
             });
         }
-    }
 
-    // Arithmetic safety: any numeric args across all instructions
-    let has_numeric = instructions
-        .iter()
-        .flat_map(|ix| ix.args.iter())
-        .any(|arg| {
-            arg.contains("u8")
-                || arg.contains("u16")
-                || arg.contains("u32")
-                || arg.contains("u64")
-                || arg.contains("u128")
-        });
+        // Arithmetic safety: per-instruction, only for instructions with numeric args
+        let numeric_args: Vec<&String> = instruction.args.iter()
+            .filter(|arg| {
+                arg.contains("u8") || arg.contains("u16") || arg.contains("u32")
+                    || arg.contains("u64") || arg.contains("u128")
+            })
+            .collect();
 
-    if has_numeric || test_props.contains("arithmetic_safety") {
-        candidates.push(PropertyCandidateIr {
-            id: "program_arithmetic_safety".into(),
-            category: "arithmetic_safety".into(),
-            title: "Program arithmetic safety".into(),
-            confidence: "medium".into(),
-            relevant_instructions: instructions.iter().map(|ix| ix.name.clone()).collect(),
-            evidence: instructions
-                .iter()
-                .flat_map(|ix| ix.args.iter().cloned())
-                .filter(|arg| arg.contains('u'))
-                .collect(),
-            prompt_hint: "Model the numeric parameters and prove arithmetic bounds are preserved.".into(),
-        });
+        if !numeric_args.is_empty() || test_props.contains("arithmetic_safety") {
+            candidates.push(PropertyCandidateIr {
+                id: format!("{}_arithmetic_safety", instruction.name),
+                category: "arithmetic_safety".into(),
+                title: format!("{}: arithmetic safety", instruction.name),
+                confidence: "medium".into(),
+                relevant_instructions: vec![instruction.name.clone()],
+                evidence: numeric_args.iter().map(|a| (*a).clone()).collect(),
+                prompt_hint: format!(
+                    "Model the numeric parameters for {} and prove arithmetic bounds are preserved. Specific args: {}",
+                    instruction.name,
+                    numeric_args.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(", ")
+                ),
+            });
+        }
     }
 
     candidates

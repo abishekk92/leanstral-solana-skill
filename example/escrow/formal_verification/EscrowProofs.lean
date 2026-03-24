@@ -3,6 +3,7 @@ import Leanstral.Solana.Account
 import Leanstral.Solana.Authority
 import Leanstral.Solana.Cpi
 import Leanstral.Solana.State
+import Leanstral.Solana.Valid
 import Mathlib
 import Mathlib.Tactic
 
@@ -22,15 +23,19 @@ structure EscrowState where
   escrow_token_account : Pubkey
   bump : U8
 
-def cancelTransition (p_preState : EscrowState) (p_signer : Pubkey) : Option Unit :=
-  if h : p_signer = p_preState.initializer then
+structure ProgramState where
+  escrow : EscrowState
+  initializer : Pubkey
+
+def cancelTransition (p_preState : ProgramState) (p_signer : Pubkey) : Option Unit :=
+  if h : p_signer = p_preState.escrow.initializer then
     some ()
   else
     none
 
-theorem cancel_access_control (p_preState : EscrowState) (p_signer : Pubkey)
+theorem cancel_access_control (p_preState : ProgramState) (p_signer : Pubkey)
     (h : cancelTransition p_preState p_signer ≠ none) :
-    p_signer = p_preState.initializer := by
+    p_signer = p_preState.escrow.initializer := by
   unfold cancelTransition at h
   split_ifs at h with h_eq
   · exact h_eq
@@ -84,13 +89,25 @@ structure EscrowState where
   escrow_token_account : Pubkey
   bump : U8
 
-def cancelTransition (p_s : EscrowState) : Option EscrowState :=
-  some { p_s with lifecycle := Lifecycle.closed }
+structure ProgramState where
+  escrow : EscrowState
 
-theorem cancel_closes_escrow (p_preState p_postState : EscrowState)
+def cancelTransition (p_s : ProgramState) : Option ProgramState :=
+  if p_s.escrow.lifecycle = Lifecycle.open then
+    some {
+      escrow := {
+        p_s.escrow with
+        lifecycle := Lifecycle.closed
+      }
+    }
+  else
+    none
+
+theorem cancel_closes_escrow (p_preState p_postState : ProgramState)
     (h : cancelTransition p_preState = some p_postState) :
-    p_postState.lifecycle = Lifecycle.closed := by
+    p_postState.escrow.lifecycle = Lifecycle.closed := by
   unfold cancelTransition at h
+  split_ifs at h with h_open
   cases h
   rfl
 
@@ -102,23 +119,22 @@ end CancelStateMachine
 
 namespace ExchangeAccessControl
 
-structure EscrowState where
+structure ProgramState where
   initializer : Pubkey
-  initializer_token_account : Pubkey
-  initializer_amount : U64
-  taker_amount : U64
-  escrow_token_account : Pubkey
-  bump : U8
+  taker : Pubkey
+  initializer_amount : Nat
+  taker_amount : Nat
+  is_active : Bool
 
-def exchangeTransition (p_preState : EscrowState) (p_signer : Pubkey) : Option Unit :=
-  if p_signer = p_preState.initializer then
+def exchangeTransition (p_preState : ProgramState) (p_signer : Pubkey) : Option Unit :=
+  if h : p_signer = p_preState.taker then
     some ()
   else
     none
 
-theorem exchange_access_control (p_preState : EscrowState) (p_signer : Pubkey)
+theorem exchange_access_control (p_preState : ProgramState) (p_signer : Pubkey)
     (h : exchangeTransition p_preState p_signer ≠ none) :
-    p_signer = p_preState.initializer := by
+    p_signer = p_preState.taker := by
   unfold exchangeTransition at h
   split_ifs at h with h_eq
   · exact h_eq
@@ -172,13 +188,25 @@ structure EscrowState where
   escrow_token_account : Pubkey
   bump : U8
 
-def exchangeTransition (p_preState : EscrowState) : Option EscrowState :=
-  some { p_preState with lifecycle := Lifecycle.closed }
+structure ProgramState where
+  escrow : EscrowState
 
-theorem exchange_closes_escrow (p_preState p_postState : EscrowState)
+def exchangeTransition (p_s : ProgramState) : Option ProgramState :=
+  if p_s.escrow.lifecycle = Lifecycle.open then
+    some {
+      escrow := {
+        p_s.escrow with
+        lifecycle := Lifecycle.closed
+      }
+    }
+  else
+    none
+
+theorem exchange_closes_escrow (p_preState p_postState : ProgramState)
     (h : exchangeTransition p_preState = some p_postState) :
-    p_postState.lifecycle = Lifecycle.closed := by
+    p_postState.escrow.lifecycle = Lifecycle.closed := by
   unfold exchangeTransition at h
+  split_ifs at h with h_open
   cases h
   rfl
 
@@ -190,7 +218,7 @@ end ExchangeStateMachine
 
 namespace InitializeAccessControl
 
-structure EscrowState where
+structure ProgramState where
   initializer : Pubkey
   initializer_token_account : Pubkey
   initializer_amount : U64
@@ -198,13 +226,13 @@ structure EscrowState where
   escrow_token_account : Pubkey
   bump : U8
 
-def initializeTransition (p_preState : EscrowState) (p_signer : Pubkey) : Option Unit :=
+def initializeTransition (p_preState : ProgramState) (p_signer : Pubkey) : Option Unit :=
   if p_signer = p_preState.initializer then
     some ()
   else
     none
 
-theorem initialize_access_control (p_preState : EscrowState) (p_signer : Pubkey)
+theorem initialize_access_control (p_preState : ProgramState) (p_signer : Pubkey)
     (h : initializeTransition p_preState p_signer ≠ none) :
     p_signer = p_preState.initializer := by
   unfold initializeTransition at h
@@ -213,6 +241,34 @@ theorem initialize_access_control (p_preState : EscrowState) (p_signer : Pubkey)
   · contradiction
 
 end InitializeAccessControl
+
+/- ============================================================================
+   InitializeArithmeticSafety Proof
+   ============================================================================ -/
+
+namespace InitializeArithmeticSafety
+
+def U64_MAX : Nat := 2^64 - 1
+
+structure ProgramState where
+  initializer_amount : Nat
+  taker_amount : Nat
+
+def initializeTransition (p_amount p_taker_amount : Nat) : Option ProgramState :=
+  if p_amount > 0 ∧ p_amount ≤ U64_MAX ∧ p_taker_amount > 0 ∧ p_taker_amount ≤ U64_MAX then
+    some { initializer_amount := p_amount, taker_amount := p_taker_amount }
+  else
+    none
+
+theorem initialize_arithmetic_safety (p_amount p_taker_amount : Nat) (p_postState : ProgramState)
+    (h : initializeTransition p_amount p_taker_amount = some p_postState) :
+    p_postState.initializer_amount ≤ U64_MAX ∧ p_postState.taker_amount ≤ U64_MAX := by
+  unfold initializeTransition at h
+  split_ifs at h with h_bounds
+  cases h
+  exact ⟨h_bounds.2.1, h_bounds.2.2.2⟩
+
+end InitializeArithmeticSafety
 
 /- ============================================================================
    InitializeCpiCorrectness Proof

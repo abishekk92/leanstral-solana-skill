@@ -149,11 +149,11 @@ The following are axiomatic (not verified):
 | cancel_access_control | **Verified** | `CancelAccessControl.cancel_access_control` |
 | exchange_access_control | **Verified** | `ExchangeAccessControl.exchange_access_control` |
 | initialize_access_control | **Verified** | `InitializeAccessControl.initialize_access_control` |
-| cancel_cpi_correct | **Verified** | `CancelCpiCorrectness.cancel_cpi_valid` |
-| exchange_cpi_correct | **Verified** | `ExchangeCpiCorrectness.exchange_cpis_valid` |
-| initialize_cpi_correct | **Verified** | `InitializeCpiCorrectness.initialize_cpi_valid` |
+| cancel_cpi_correct | **Verified** | `CancelCpiCorrectness.cancel_cpi_correct` |
+| exchange_cpi_correct | **Verified** | `ExchangeCpiCorrectness.exchange_cpi_correct` |
+| initialize_cpi_correct | **Verified** | `InitializeCpiCorrectness.initialize_cpi_correct` |
 | cancel_closes_escrow | **Verified** | `CancelStateMachine.cancel_closes_escrow` |
 | exchange_closes_escrow | **Verified** | `ExchangeStateMachine.exchange_closes_escrow` |
-| arithmetic_bounds | **Open** | Failed validation after 1 repair round |
+| initialize_arithmetic_safety | **Verified** | `InitializeArithmeticSafety.initialize_arithmetic_safety` |
 
-8 of 9 properties verified. All proofs compile via `lake build`.
+9 of 9 properties verified. All proofs compile via `lake build`.
