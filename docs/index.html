@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leanstral - Formally Verify Solana Programs with Lean 4</title>
+  <meta name="description" content="A Claude Code skill that formally verifies Solana programs using Lean 4 proofs. Claude writes the proofs, Leanstral solves the hard sub-goals.">
+  <meta property="og:title" content="Leanstral - Formally Verify Solana Programs">
+  <meta property="og:description" content="Claude writes Lean 4 proofs. Leanstral solves hard sub-goals. 16/16 proofs verified across 2 example programs.">
+  <meta property="og:url" content="https://abishekk92.github.io/leanstral-solana-skill/">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a class="logo" href="#">lean<span>stral</span></a>
+    <div class="links">
+      <a href="#how-it-works">How It Works</a>
+      <a href="#properties">Properties</a>
+      <a href="#examples">Examples</a>
+      <a href="#get-started">Get Started</a>
+      <a href="https://github.com/abishekk92/leanstral-solana-skill">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <h1>Formally verify Solana programs<br>with <span>Lean 4 proofs</span></h1>
+    <p class="subtitle">Claude writes the proofs. Leanstral solves the hard sub-goals. Every theorem compiles or it doesn't ship.</p>
+    <div class="cta">
+      <a href="#get-started" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/abishekk92/leanstral-solana-skill" class="btn btn-secondary">View on GitHub</a>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="number">16/16</div>
+        <div class="label">Proofs Verified</div>
+      </div>
+      <div class="stat">
+        <div class="number">2</div>
+        <div class="label">Example Programs</div>
+      </div>
+      <div class="stat">
+        <div class="number">6</div>
+        <div class="label">Property Classes</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="how-it-works">
+  <div class="container">
+    <h2>How it works</h2>
+    <p class="section-sub">Claude drives proof writing directly. No lossy analyzer, no pipeline, no prompt templates.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Claude reads your code</h3>
+        <p>Claude reads your Solana source, writes a verification spec (SPEC.md), and models your program's state, transitions, and invariants in Lean 4.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Proofs are written and compiled</h3>
+        <p>Claude writes theorem statements and proofs, then runs <code>lake build</code> and iterates on errors. Full code context means better proofs on the first try.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Hard sub-goals go to Leanstral</h3>
+        <p>When Claude can't fill a <code>sorry</code>, it calls Leanstral (Mistral's theorem prover) via <code>fill-sorry</code> with pass@N sampling. First compilable result wins.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="properties">
+  <div class="container">
+    <h2>What gets verified</h2>
+    <p class="section-sub">Six categories of properties, proven as Lean 4 theorems that must compile.</p>
+    <div class="property-grid">
+      <div class="property-card">
+        <h3>Access Control</h3>
+        <p>Signer checks and authority constraints. Only authorized parties can call each instruction.</p>
+      </div>
+      <div class="property-card">
+        <h3>Conservation</h3>
+        <p>Token totals preserved across every operation. The vault always covers outstanding claims.</p>
+      </div>
+      <div class="property-card">
+        <h3>CPI Correctness</h3>
+        <p>Every cross-program invocation passes the correct program ID, accounts, authority, and amount.</p>
+      </div>
+      <div class="property-card">
+        <h3>State Machines</h3>
+        <p>Lifecycle transitions are deterministic. Closed accounts stay closed, modes follow prescribed order.</p>
+      </div>
+      <div class="property-card">
+        <h3>Arithmetic Safety</h3>
+        <p>No silent overflow or underflow. All u64/i128 operations proven to stay within bounds.</p>
+      </div>
+      <div class="property-card">
+        <h3>Fee Isolation</h3>
+        <p>Unpaid fees tracked as negative credits, never inflating PnL, insurance, or deficit calculations.</p>
+      </div>
+    </div>
+    <p class="trust-note">We verify program logic. SPL Token, the Solana runtime, CPI mechanics, and Anchor are trusted as axioms.</p>
+  </div>
+</section>
+
+<section id="examples">
+  <div class="container">
+    <h2>Working examples</h2>
+    <p class="section-sub">Two verified programs shipping with the skill. Every proof compiles via <code>lake build</code>.</p>
+    <div class="example-grid">
+      <div class="example-card">
+        <h3>Escrow</h3>
+        <span class="tag">Anchor</span>
+        <p class="desc">A token escrow that lets two parties trade safely. The initializer deposits tokens and sets terms, a taker completes the trade, or the initializer cancels.</p>
+        <div class="result">9/9 proofs verified</div>
+        <p class="props">Access control (3) &middot; CPI correctness (3) &middot; State machines (2) &middot; Arithmetic safety (1)</p>
+        <pre><code><span style="color:#8b949e">-- Cancel only succeeds if signer = initializer</span>
+theorem cancel_access_control
+    (p_preState : ProgramState) (p_signer : Pubkey)
+    (h : cancelTransition p_preState p_signer ≠ none) :
+    p_signer = p_preState.escrow.initializer := by
+  unfold cancelTransition at h
+  split_ifs at h with h_eq
+  · exact h_eq
+  · contradiction</code></pre>
+        <a href="https://github.com/abishekk92/leanstral-solana-skill/tree/main/example/escrow/formal_verification">View proofs</a>
+      </div>
+      <div class="example-card">
+        <h3>Percolator</h3>
+        <span class="tag">Pure Rust</span>
+        <p class="desc">A perpetual DEX risk engine with protected principal, junior profit claims, and lazy A/K side indices. Non-Anchor, no_std.</p>
+        <div class="result">7/7 proofs verified</div>
+        <p class="props">Conservation (3) &middot; Arithmetic safety (2) &middot; State machine (1) &middot; Fee isolation (1)</p>
+        <pre><code><span style="color:#8b949e">-- Deposit preserves V >= C_tot + I</span>
+theorem deposit_conservation
+    (p_s p_s' : EngineState) (p_amount : Nat)
+    (h_inv : conservation p_s)
+    (h : depositTransition p_s p_amount = some p_s') :
+    conservation p_s' := by
+  unfold depositTransition at h
+  split_ifs at h with h_le
+  cases h
+  unfold conservation at h_inv ⊢
+  dsimp only
+  omega</code></pre>
+        <a href="https://github.com/abishekk92/leanstral-solana-skill/tree/main/example/percolator/formal_verification">View proofs</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="get-started">
+  <div class="container">
+    <h2>Get started</h2>
+    <p class="section-sub">Three steps to formally verified Solana programs.</p>
+    <div class="getting-started-steps">
+      <div class="gs-step">
+        <h3><span>1.</span> Set your Mistral API key</h3>
+        <p>Free during Mistral's feedback period.</p>
+        <pre><code>export MISTRAL_API_KEY=your_key_here</code></pre>
+      </div>
+      <div class="gs-step">
+        <h3><span>2.</span> Build the CLI</h3>
+        <pre><code>git clone https://github.com/abishekk92/leanstral-solana-skill.git
+cd leanstral-solana-skill
+cargo build --release</code></pre>
+      </div>
+      <div class="gs-step">
+        <h3><span>3.</span> Ask Claude to verify your program</h3>
+        <p>Open Claude Code in your Solana project directory and say:</p>
+        <pre><code>Formally verify this program.</code></pre>
+        <p>Claude will read your code, write SPEC.md, generate Lean 4 proofs, and iterate until they compile.</p>
+      </div>
+    </div>
+    <p class="note">First Lean build takes 15-45 minutes to compile Mathlib. Subsequent builds reuse the cache.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>Leanstral Solana Skill &middot; MIT License</p>
+    <div class="links">
+      <a href="https://github.com/abishekk92/leanstral-solana-skill">GitHub</a>
+      <a href="https://github.com/abishekk92/leanstral-solana-skill/blob/main/SKILL.md">SKILL.md</a>
+      <a href="https://github.com/abishekk92/leanstral-solana-skill/issues">Issues</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
